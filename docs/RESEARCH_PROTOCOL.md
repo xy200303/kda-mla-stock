@@ -4,7 +4,7 @@
 
 ## 研究问题
 
-1. KDA 与 MLA 混合编码器是否比 LSTM、GRU、Transformer 和 MLP 基线具有更高的截面预测能力？
+1. KDA 与 MLA 混合编码器是否比传统机器学习、LSTM、GRU、Transformer 和 MLP 基线具有更高的截面预测能力？
 2. KDA-only 与 MLA-only 相对混合结构的性能变化，能否说明两类注意力模块存在互补作用？
 3. 约 712 万参数的快速模型能否以较小精度损失换取显著训练吞吐提升？
 4. 模型预测优势在交易费用、涨跌停、停牌和换手约束下是否仍然存在？
@@ -33,8 +33,18 @@
 | GRU | `model-gru.json` | 634,113 | 轻量循环网络基线 |
 | Transformer | `model-transformer.json` | 3,162,625 | 标准因果注意力基线 |
 | MLP | `model-mlp.json` | 139,777 | 低成本非序列基线 |
+| Ridge | `ml-ridge.json` | 拟合后记录 | sklearn 线性基线 |
+| Random Forest | `ml-random-forest.json` | 拟合后记录节点数 | sklearn Bagging 树基线 |
+| HistGBDT | `ml-hist-gbdt.json` | 拟合后记录节点数 | sklearn Boosting 树基线 |
+| LightGBM | `ml-lightgbm.json` | 拟合后记录叶子数 | 官方 LightGBM 基线 |
 
-不同模型参数量不完全匹配，因此论文必须同时报告参数量、训练吞吐和峰值显存。若需要严格的等参数比较，应另建 parameter-matched 配置，不应只通过模型名称宣称公平。
+神经模型参数量与树模型节点数不是同一种复杂度指标，不应直接解释为等参数比较。论文必须分别报告神经
+模型参数量、传统模型结构复杂度、拟合时间、推理时间、训练吞吐和峰值显存。若需要严格的等参数比较，
+应另建 parameter-matched 配置，不应只通过模型名称宣称公平。
+
+传统模型算法直接来自 `scikit-learn` 和官方 `lightgbm`，不使用项目自写的回归器或决策树。输入由同一
+`MarketDatasetBundle` 生成：10 个标准化特征的当前值，加上 5、20、60、256 日均值和标准差，共 90
+维。滚动窗口只能读取预测锚点及之前的数据，训练、验证、测试引用与神经模型完全一致。
 
 ## 训练协议
 
@@ -46,12 +56,15 @@
 - 模型选择：验证集 Rank IC 最大的检查点。
 - 随机种子：正式表格至少使用 `42 3407 2026` 三个种子，报告均值和标准差。
 - KDA 正式实验强制 `fla-core`，不得使用逐时间步的 PyTorch 参考路径提交速度结果。
+- 传统模型使用配置中固定的 sklearn/LightGBM 超参数；LightGBM 只在验证集早停，不读取测试集。
+- 神经与传统模型都通过统一 `Trainer`、`Valer` 和数据加载器运行，不允许为某个基线单独改变切分或特征归一化。
 
 快速完成第一轮筛选：
 
 ```bash
 python scripts/run_experiments.py \
   --experiments kda-mla-fast kda-only mla-only lstm gru transformer mlp \
+                ridge random-forest hist-gbdt lightgbm \
   --seeds 42
 ```
 
@@ -60,6 +73,7 @@ python scripts/run_experiments.py \
 ```bash
 python scripts/run_experiments.py \
   --experiments kda-mla-fast kda-mla-full kda-only mla-only transformer lstm \
+                ridge random-forest hist-gbdt lightgbm \
   --seeds 42 3407 2026
 ```
 

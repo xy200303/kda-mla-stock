@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from kda_mla_stock.configuration import ModelConfig
-from kda_mla_stock.modeling import build_model, count_parameters
+from kda_mla_stock.models import build_model, count_parameters
 from kda_mla_stock.reporting import plot_comparison, plot_significance
 
 

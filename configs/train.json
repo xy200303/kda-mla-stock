@@ -18,6 +18,7 @@
   "fused_optimizer": true,
   "allow_tf32": true,
   "compile_mode": "none",
+  "log_interval": 20,
   "patience": 6,
   "selection_metric": "rank_ic_mean",
   "selection_mode": "max",

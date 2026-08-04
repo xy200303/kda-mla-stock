@@ -1,0 +1,12 @@
+{
+  "architecture": "hist_gbdt",
+  "aggregation_windows": [5, 20, 60, 256],
+  "params": {
+    "max_iter": 300,
+    "learning_rate": 0.05,
+    "max_leaf_nodes": 31,
+    "min_samples_leaf": 50,
+    "l2_regularization": 1.0,
+    "early_stopping": false
+  }
+}

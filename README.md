@@ -1,7 +1,8 @@
 # KDA-MLA Stock
 
-基于 PyTorch 的股票收益预测研究项目，使用 Kimi Delta Attention（KDA）与 Multi-head
-Latent Attention（MLA）编码单只股票的历史 OHLCV 特征，并预测未来 5 个交易日收益。
+股票收益预测研究项目，使用 Kimi Delta Attention（KDA）与 Multi-head Latent Attention（MLA）
+编码单只股票的历史 OHLCV 特征，并预测未来 5 个交易日收益。项目同时提供 sklearn 和 LightGBM
+传统基线，以相同数据切分、Qlib 回测和统计检验进行公平比较。
 
 项目默认使用真实 Qlib `CSI300` 时变成分股数据。合成数据仅用于检查代码能否运行，不应拿来判断策略有效性。
 
@@ -24,6 +25,13 @@ OHLCV
 KDA 负责用递归状态压缩长序列，MLA 在少量层中补充完整的因果注意力交互。该项目借用了 KDA 和 MLA
 模块，不是 Kimi K3 的缩小版，也没有使用语言模型、Tokenizer 或文本预训练。
 
+模型算法不重复造轮子：Ridge、Random Forest 和 HistGradientBoosting 直接使用 `scikit-learn`，
+LightGBM 使用官方 `lightgbm`，KDA 正式训练使用 `fla-core`，MLA 使用 PyTorch 官方 SDPA。项目自己的
+代码只负责模型组合、无泄漏特征、统一训练评估和科研报告。
+
+所有模型实现位于 `src/kda_mla_stock/models/`。`Trainer`、`Valer` 和 `MarketDatasetBundle` 为神经
+网络与传统模型提供统一入口；旧的 `modeling.py`、`traditional.py` 和传统模型脚本只保留兼容导入。
+
 ## AutoDL 快速开始
 
 推荐 Python 3.10 或 3.11、Linux、NVIDIA CUDA 环境。进入项目目录后安装：
@@ -31,11 +39,11 @@ KDA 负责用递归状态压缩长序列，MLA 在少量层中补充完整的因
 ```bash
 cd /root/kda-mla-stock
 pip install -U pip
-pip install -e ".[qlib,cuda]"
+pip install -e ".[qlib,cuda,ml]"
 ```
 
 `cuda` 额外依赖会安装 `fla-core` 的 KDA CUDA/Triton 内核。纯 PyTorch 后端可以在 CPU 上运行测试，
-但不适合训练长度为 256 的默认模型。
+但不适合训练长度为 256 的默认模型。`ml` 会安装 sklearn、LightGBM 和 joblib。
 
 下载真实 Qlib A 股数据、导出 `CSI300` 并训练约 712 万参数的快速模型：
 
@@ -89,6 +97,27 @@ python scripts/train.py \
 
 这里从输出目录读取旧模型配置，因此能继续原 2218 万参数检查点。断点位于 epoch 边界；中途停止某个
 epoch 时，该 epoch 已完成的 batch 不会恢复。
+
+## 模块性能分析
+
+在 AutoDL CUDA 环境中使用正式训练的 batch、序列长度和精度，分别测量 KDA、MLA、FFN、两类
+编码层以及完整模型的前向和反向耗时：
+
+```bash
+python scripts/profile_model.py \
+  --model-config configs/model-fast.json \
+  --train-config data/train-real.json \
+  --output-dir outputs/profile-fast
+```
+
+终端会输出各模块的参数量、前向耗时、前向加反向耗时、吞吐量和峰值显存。
+`module_timings.json` 保存模块基准结果，`operator_table.txt` 列出耗时最高的 PyTorch/CUDA 算子，
+`trace.json` 可以使用 Chrome/Perfetto trace viewer 查看时间线。首次 FLA/Triton 编译发生在预热阶段，
+不计入正式计时。
+
+高性能版本将 KDA 的 Q/K/V/G 投影和深度卷积各合并为一次算子调用，将 FFN 的 gate/up 投影合并，
+缓存 MLA RoPE，并减少训练循环中的 GPU/CPU 同步。参数量和数学结构保持不变，旧版 safetensors
+权重会在加载时自动合并到新布局。优化前后速度应使用该 profile 在同一块 GPU、相同 batch 下比较。
 
 ## 测试集评估
 
@@ -169,6 +198,24 @@ python scripts/download_yfinance.py AAPL MSFT NVDA AMZN META GOOGL \
 - `configs/model-transformer.json`：标准因果 Transformer 基线；
 - `configs/model-mlp.json`：低成本 MLP 基线；
 - `configs/model-smoke.json`：CPU 冒烟测试小模型。
+- `configs/ml-ridge.json`：sklearn Ridge 线性基线；
+- `configs/ml-random-forest.json`：sklearn Random Forest 基线；
+- `configs/ml-hist-gbdt.json`：sklearn HistGradientBoosting 基线；
+- `configs/ml-lightgbm.json`：官方 LightGBM 基线。
+
+传统模型使用相同的 256 日窗口。每个原始特征提取当前值，以及 5、20、60、256 日的均值和标准差，
+共 `10 + 4 x 2 x 10 = 90` 维；所有统计量都只观察锚点当日及之前。训练和评估仍使用统一命令，模型
+类型由配置自动识别：
+
+```bash
+python scripts/train.py \
+  --model-config configs/ml-lightgbm.json \
+  --train-config data/train-real.json \
+  --output-dir outputs/lightgbm
+python scripts/evaluate.py \
+  --checkpoint-dir outputs/lightgbm \
+  --split test
+```
 
 使用相同数据切分比较三种结构：
 
@@ -193,6 +240,7 @@ python scripts/train.py \
 ```bash
 python scripts/run_experiments.py \
   --experiments kda-mla-fast kda-only mla-only lstm gru transformer mlp \
+                ridge random-forest hist-gbdt lightgbm \
   --seeds 42
 ```
 
@@ -201,6 +249,7 @@ python scripts/run_experiments.py \
 ```bash
 python scripts/run_experiments.py \
   --experiments kda-mla-fast kda-mla-full kda-only mla-only transformer lstm \
+                ridge random-forest hist-gbdt lightgbm \
   --seeds 42 3407 2026
 ```
 
@@ -226,7 +275,7 @@ python scripts/run_experiments.py \
 安装开发依赖并运行检查：
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,ml]"
 ruff check .
 pytest -q
 ```
@@ -251,8 +300,13 @@ kda-mla-stock/
 ├── scripts/                  # 真实数据准备、训练、评估与辅助命令
 ├── src/kda_mla_stock/
 │   ├── data.py               # 特征、归一化、时间切分和窗口数据集
-│   ├── modeling.py           # KDA、MLA 与收益预测模型
+│   ├── datasets.py           # 神经/传统模型统一数据加载与表格特征
+│   ├── engine.py             # 统一 Trainer 与 Valer
+│   ├── models/
+│   │   ├── neural.py         # KDA、MLA 与神经网络基线
+│   │   └── traditional.py    # sklearn/LightGBM 模型适配
 │   ├── training.py           # 训练、TensorBoard 和 safetensors 检查点
+│   ├── evaluation.py         # 统一预测指标、回测和图表入口
 │   ├── metrics.py            # IC、Rank IC 和 ICIR
 │   ├── qlib_evaluation.py     # Qlib 策略、撮合和风险分析
 │   ├── reporting.py          # 论文图表与模型比较

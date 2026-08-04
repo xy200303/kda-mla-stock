@@ -113,6 +113,7 @@ class TrainingConfig:
     fused_optimizer: bool = True
     allow_tf32: bool = True
     compile_mode: str = "none"
+    log_interval: int = 20
     patience: int = 8
     selection_metric: str = "rank_ic_mean"
     selection_mode: str = "max"
@@ -133,8 +134,8 @@ class TrainingConfig:
             raise ValueError(
                 "num_workers must be non-negative and prefetch_factor must be positive"
             )
-        if self.patience <= 0:
-            raise ValueError("patience must be positive")
+        if self.patience <= 0 or self.log_interval <= 0:
+            raise ValueError("patience and log_interval must be positive")
         if not 0.0 < self.top_fraction <= 0.5:
             raise ValueError("top_fraction must be in (0, 0.5]")
         if self.mixed_precision not in {"no", "fp16", "bf16"}:

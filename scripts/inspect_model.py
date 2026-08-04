@@ -4,7 +4,7 @@ import argparse
 import json
 
 from kda_mla_stock.configuration import ModelConfig
-from kda_mla_stock.modeling import build_model, count_parameters
+from kda_mla_stock.models import build_model, count_parameters
 
 
 def main() -> None:

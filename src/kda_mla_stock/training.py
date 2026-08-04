@@ -100,6 +100,14 @@ def configure_torch_runtime(config: TrainingConfig, device: torch.device) -> Non
     torch.set_float32_matmul_precision("high" if config.allow_tf32 else "highest")
 
 
+def _assert_finite_loss(loss: torch.Tensor) -> None:
+    finite = torch.isfinite(loss.detach())
+    if loss.device.type == "cuda" and hasattr(torch, "_assert_async"):
+        torch._assert_async(finite, "training loss became non-finite")
+    elif not bool(finite):
+        raise RuntimeError("training loss became non-finite")
+
+
 def _create_optimizer(
     model: nn.Module,
     config: TrainingConfig,
@@ -280,7 +288,14 @@ def train_model(
             state_path = resume_dir / "last_state.pt"
             if state_path.exists():
                 state = torch.load(state_path, map_location=device, weights_only=False)
-                optimizer.load_state_dict(state["optimizer"])
+                try:
+                    optimizer.load_state_dict(state["optimizer"])
+                except ValueError as error:
+                    warnings.warn(
+                        "optimizer state is incompatible with fused model parameters; "
+                        f"optimizer moments will restart ({error})",
+                        stacklevel=2,
+                    )
                 scheduler.load_state_dict(state["scheduler"])
                 start_epoch = int(state["epoch"]) + 1
                 best_validation_loss = float(state["best_validation_loss"])
@@ -317,7 +332,7 @@ def train_model(
         f"device={device_name}, batch_size={training_config.batch_size}, "
         f"workers={training_config.num_workers}, fused_adamw={fused_optimizer}, "
         f"tf32={training_config.allow_tf32 and device.type == 'cuda'}, "
-        f"compile={training_config.compile_mode}"
+        f"compile={training_config.compile_mode}, log_interval={training_config.log_interval}"
     )
 
     writer = SummaryWriter(logdir=str(output_dir / "tensorboard"))
@@ -327,8 +342,9 @@ def train_model(
         history = json.loads(history_path.read_text(encoding="utf-8")).get("history", [])
     for epoch in range(start_epoch, training_config.epochs):
         execution_model.train()
-        train_loss_sum = 0.0
+        train_loss_sum = torch.zeros((), device=device, dtype=torch.float32)
         sample_count = 0
+        train_loss = float("nan")
         epoch_started_at = time.perf_counter()
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
@@ -345,28 +361,38 @@ def train_model(
                 with _autocast_context(device, training_config.mixed_precision):
                     predictions = execution_model(features)
                     loss = F.mse_loss(predictions.float(), targets.float())
-                if not torch.isfinite(loss):
-                    raise RuntimeError("training loss became non-finite")
+                _assert_finite_loss(loss)
                 if batch_index == 1:
                     progress.set_postfix(stage="backward", refresh=True)
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    training_config.max_grad_norm,
+                    foreach=True if device.type == "cuda" else None,
+                )
                 scaler.step(optimizer)
                 scaler.update()
-                batch_loss = float(loss.item())
-                train_loss_sum += batch_loss * features.shape[0]
-                sample_count += features.shape[0]
-                progress.set_postfix(
-                    loss=f"{batch_loss:.6f}",
-                    average=f"{train_loss_sum / sample_count:.6f}",
-                    lr=f"{optimizer.param_groups[0]['lr']:.2e}",
-                    refresh=False,
+                current_batch_size = features.shape[0]
+                train_loss_sum.add_(loss.detach().float(), alpha=current_batch_size)
+                sample_count += current_batch_size
+                should_log = (
+                    batch_index % training_config.log_interval == 0
+                    or batch_index == len(train_loader)
                 )
+                if should_log:
+                    batch_loss, train_loss = torch.stack(
+                        (loss.detach().float(), train_loss_sum / sample_count)
+                    ).tolist()
+                    progress.set_postfix(
+                        loss=f"{batch_loss:.6f}",
+                        average=f"{train_loss:.6f}",
+                        lr=f"{optimizer.param_groups[0]['lr']:.2e}",
+                        refresh=False,
+                    )
 
         training_elapsed_seconds = time.perf_counter() - epoch_started_at
         scheduler.step()
-        train_loss = train_loss_sum / sample_count
         validation_loss, validation_predictions = predict_loader(
             execution_model,
             valid_loader,

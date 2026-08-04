@@ -1,12 +1,16 @@
 {
   "experiments": [
-    {"name": "kda-mla-fast", "model_config": "configs/model-fast.json"},
-    {"name": "kda-mla-full", "model_config": "configs/model-small.json"},
-    {"name": "kda-only", "model_config": "configs/model-kda-only.json"},
-    {"name": "mla-only", "model_config": "configs/model-mla-only.json"},
-    {"name": "lstm", "model_config": "configs/model-lstm.json"},
-    {"name": "gru", "model_config": "configs/model-gru.json"},
-    {"name": "transformer", "model_config": "configs/model-transformer.json"},
-    {"name": "mlp", "model_config": "configs/model-mlp.json"}
+    {"name": "kda-mla-fast", "kind": "neural", "model_config": "configs/model-fast.json"},
+    {"name": "kda-mla-full", "kind": "neural", "model_config": "configs/model-small.json"},
+    {"name": "kda-only", "kind": "neural", "model_config": "configs/model-kda-only.json"},
+    {"name": "mla-only", "kind": "neural", "model_config": "configs/model-mla-only.json"},
+    {"name": "lstm", "kind": "neural", "model_config": "configs/model-lstm.json"},
+    {"name": "gru", "kind": "neural", "model_config": "configs/model-gru.json"},
+    {"name": "transformer", "kind": "neural", "model_config": "configs/model-transformer.json"},
+    {"name": "mlp", "kind": "neural", "model_config": "configs/model-mlp.json"},
+    {"name": "ridge", "kind": "traditional", "model_config": "configs/ml-ridge.json"},
+    {"name": "random-forest", "kind": "traditional", "model_config": "configs/ml-random-forest.json"},
+    {"name": "hist-gbdt", "kind": "traditional", "model_config": "configs/ml-hist-gbdt.json"},
+    {"name": "lightgbm", "kind": "traditional", "model_config": "configs/ml-lightgbm.json"}
   ]
 }

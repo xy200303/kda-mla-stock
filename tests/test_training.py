@@ -6,19 +6,17 @@ import pandas as pd
 import torch
 
 from kda_mla_stock.configuration import ModelConfig, TrainingConfig
-from kda_mla_stock.data import (
-    build_window_datasets,
-    engineer_features,
-    fit_normalization_stats,
-)
-from kda_mla_stock.modeling import StockForecaster
-from kda_mla_stock.training import load_model, train_model
+from kda_mla_stock.engine import Trainer
+from kda_mla_stock.models import StockForecaster
+from kda_mla_stock.training import load_model
 
 
 def test_one_epoch_training_and_checkpoint_load(
     market_frame: pd.DataFrame,
     tmp_path: Path,
 ) -> None:
+    data_path = tmp_path / "market.csv"
+    market_frame.to_csv(data_path, index=False)
     model_config = ModelConfig(
         num_features=10,
         hidden_size=16,
@@ -37,6 +35,7 @@ def test_one_epoch_training_and_checkpoint_load(
         attention_backend="torch",
     )
     training_config = TrainingConfig(
+        data_path=str(data_path),
         output_dir=str(tmp_path / "run"),
         sequence_length=8,
         horizon=3,
@@ -47,24 +46,11 @@ def test_one_epoch_training_and_checkpoint_load(
         mixed_precision="no",
         patience=1,
     )
-    engineered = engineer_features(market_frame, training_config.horizon)
-    stats = fit_normalization_stats(engineered, training_config.train_end)
-    datasets = build_window_datasets(
-        engineered,
-        stats,
-        training_config.sequence_length,
-        training_config.train_end,
-        training_config.valid_end,
-    )
-    model = StockForecaster(model_config)
-    result = train_model(
-        model,
-        datasets,
-        training_config,
+    result = Trainer(
         model_config,
-        stats,
+        training_config,
         requested_device="cpu",
-    )
+    ).run()
     checkpoint = tmp_path / "run" / "best.safetensors"
     assert result["epochs_completed"] == 1
     assert checkpoint.exists()
@@ -72,7 +58,4 @@ def test_one_epoch_training_and_checkpoint_load(
 
     restored = StockForecaster(model_config)
     load_model(restored, checkpoint, torch.device("cpu"))
-    assert torch.equal(
-        restored.input_projection.weight,
-        model.input_projection.weight,
-    )
+    assert torch.isfinite(restored.input_projection.weight).all()

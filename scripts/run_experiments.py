@@ -22,6 +22,9 @@ def _load_experiments(path: str | Path) -> list[dict[str, Any]]:
     for experiment in experiments:
         if not isinstance(experiment, dict) or not {"name", "model_config"} <= experiment.keys():
             raise ValueError("each experiment requires name and model_config")
+        kind = experiment.setdefault("kind", "neural")
+        if kind not in {"neural", "traditional"}:
+            raise ValueError("experiment kind must be neural or traditional")
     return experiments
 
 
@@ -39,6 +42,7 @@ def main() -> None:
     parser.add_argument("--train-stride", type=int, default=5)
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--patience", type=int, default=6)
+    parser.add_argument("--log-interval", type=int, default=20)
     parser.add_argument(
         "--compile-mode",
         choices=["none", "default", "reduce-overhead", "max-autotune"],
@@ -59,6 +63,7 @@ def main() -> None:
         "train-stride": args.train_stride,
         "epochs": args.epochs,
         "patience": args.patience,
+        "log-interval": args.log_interval,
     }
     for name, value in positive_arguments.items():
         if value <= 0:
@@ -81,10 +86,12 @@ def main() -> None:
         for seed in args.seeds:
             run_dir = Path(args.output_root) / str(experiment["name"]) / f"seed-{seed}"
             run_directories.append(run_dir)
+            kind = str(experiment["kind"])
+            model_artifact = "model.joblib" if kind == "traditional" else "best.safetensors"
             if args.stage in {"all", "train"}:
                 completed = (
                     (run_dir / "train_summary.json").exists()
-                    and (run_dir / "best.safetensors").exists()
+                    and (run_dir / model_artifact).exists()
                 )
                 if completed and not args.force_train:
                     print(f"skip completed training: {run_dir}", flush=True)
@@ -104,6 +111,8 @@ def main() -> None:
                         str(args.num_workers),
                         "--train-stride",
                         str(args.train_stride),
+                        "--log-interval",
+                        str(args.log_interval),
                         "--seed",
                         str(seed),
                         "--epochs",
@@ -116,7 +125,7 @@ def main() -> None:
                     if args.device is not None:
                         train_command.extend(["--device", args.device])
                     checkpoint = run_dir / "last.safetensors"
-                    if checkpoint.exists():
+                    if kind == "neural" and checkpoint.exists():
                         train_command.extend(["--resume", str(run_dir)])
                     _run(train_command, args.dry_run)
 
