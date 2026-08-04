@@ -1,0 +1,21 @@
+{
+  "num_features": 10,
+  "hidden_size": 64,
+  "num_hidden_layers": 2,
+  "num_attention_heads": 4,
+  "head_dim": 16,
+  "intermediate_size": 128,
+  "kda_layers": [0],
+  "mla_layers": [1],
+  "kda_conv_kernel": 3,
+  "kda_gate_lower_bound": -5.0,
+  "qk_nope_head_dim": 12,
+  "qk_rope_head_dim": 4,
+  "value_head_dim": 16,
+  "kv_lora_rank": 16,
+  "rms_norm_eps": 0.00001,
+  "rope_theta": 10000.0,
+  "dropout": 0.0,
+  "attention_backend": "torch",
+  "num_targets": 1
+}

@@ -1,0 +1,19 @@
+{
+  "data_path": "data/qlib-csi300.csv",
+  "output_dir": "outputs/kda-mla-small",
+  "sequence_length": 256,
+  "horizon": 5,
+  "train_end": "2022-12-31",
+  "valid_end": "2023-12-31",
+  "batch_size": 64,
+  "epochs": 50,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.01,
+  "max_grad_norm": 1.0,
+  "mixed_precision": "bf16",
+  "num_workers": 0,
+  "patience": 8,
+  "seed": 42,
+  "transaction_cost_bps": 10.0,
+  "top_fraction": 0.2
+}

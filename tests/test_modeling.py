@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+import torch
+
+from kda_mla_stock.configuration import ModelConfig
+from kda_mla_stock.modeling import StockForecaster
+
+
+def small_model_config() -> ModelConfig:
+    return ModelConfig(
+        num_features=10,
+        hidden_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        head_dim=8,
+        intermediate_size=64,
+        kda_layers=[0],
+        mla_layers=[1],
+        kda_conv_kernel=3,
+        qk_nope_head_dim=6,
+        qk_rope_head_dim=2,
+        value_head_dim=8,
+        kv_lora_rank=8,
+        dropout=0.0,
+        attention_backend="torch",
+    )
+
+
+def test_hybrid_model_forward_and_backward() -> None:
+    model = StockForecaster(small_model_config())
+    features = torch.randn(3, 12, 10)
+    predictions = model(features)
+    assert predictions.shape == (3, 1)
+    predictions.square().mean().backward()
+    assert model.input_projection.weight.grad is not None
+
+
+def test_model_accepts_right_padded_attention_mask() -> None:
+    model = StockForecaster(small_model_config()).eval()
+    features = torch.randn(2, 8, 10)
+    mask = torch.tensor(
+        [[1, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 0, 0]],
+        dtype=torch.bool,
+    )
+    with torch.no_grad():
+        predictions = model(features, mask)
+    assert predictions.shape == (2, 1)
+    assert torch.isfinite(predictions).all()

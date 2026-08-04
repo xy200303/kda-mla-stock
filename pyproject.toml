@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kda-mla-stock"
+version = "0.1.0"
+description = "KDA and MLA research models for cross-sectional stock return forecasting"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26,<2.0",
+  "pandas>=2.2,<3.0",
+  "safetensors>=0.4",
+  "tensorboard>=2.18",
+  "tensorboardX>=2.6",
+  "torch>=2.3",
+]
+
+[project.optional-dependencies]
+cuda = [
+  "fla-core[cuda]>=0.5.0",
+]
+data = [
+  "yfinance>=0.2.50",
+]
+qlib = [
+  "pyqlib>=0.9.7",
+]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.9",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kda_mla_stock"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
