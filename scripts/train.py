@@ -12,7 +12,7 @@ from kda_mla_stock.data import (
     fit_normalization_stats,
     load_and_engineer_market_data,
 )
-from kda_mla_stock.modeling import StockForecaster, count_parameters
+from kda_mla_stock.modeling import build_model, count_parameters
 from kda_mla_stock.training import set_seed, train_model
 
 
@@ -23,7 +23,16 @@ def main() -> None:
     parser.add_argument("--data", default=None, help="Override data_path from the training config")
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--patience", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--num-workers", type=int, default=None)
+    parser.add_argument("--train-stride", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument(
+        "--compile-mode",
+        choices=["none", "default", "reduce-overhead", "max-autotune"],
+        default=None,
+    )
     parser.add_argument("--resume", default=None, help="Checkpoint file or output directory")
     parser.add_argument("--device", default=None, help="For example cuda, cuda:0, or cpu")
     args = parser.parse_args()
@@ -37,8 +46,18 @@ def main() -> None:
         overrides["output_dir"] = args.output_dir
     if args.epochs is not None:
         overrides["epochs"] = args.epochs
+    if args.patience is not None:
+        overrides["patience"] = args.patience
     if args.batch_size is not None:
         overrides["batch_size"] = args.batch_size
+    if args.num_workers is not None:
+        overrides["num_workers"] = args.num_workers
+    if args.train_stride is not None:
+        overrides["train_stride"] = args.train_stride
+    if args.seed is not None:
+        overrides["seed"] = args.seed
+    if args.compile_mode is not None:
+        overrides["compile_mode"] = args.compile_mode
     if overrides:
         training_config = replace(training_config, **overrides)
         training_config.validate()
@@ -62,12 +81,19 @@ def main() -> None:
         training_config.sequence_length,
         training_config.train_end,
         training_config.valid_end,
+        training_config.train_stride,
     )
     split_sizes = {name: len(dataset) for name, dataset in datasets.items()}
-    print(f"dataset samples: {json.dumps(split_sizes)}")
+    print(
+        f"dataset samples: {json.dumps(split_sizes)}, "
+        f"training stride={training_config.train_stride}"
+    )
     set_seed(training_config.seed)
-    model = StockForecaster(model_config)
-    print(f"trainable parameters: {count_parameters(model):,}")
+    model = build_model(model_config)
+    print(
+        f"model: architecture={model_config.architecture}, "
+        f"trainable parameters={count_parameters(model):,}"
+    )
     result = train_model(
         model,
         datasets,

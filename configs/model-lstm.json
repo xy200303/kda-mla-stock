@@ -1,0 +1,8 @@
+{
+  "architecture": "lstm",
+  "num_features": 10,
+  "hidden_size": 256,
+  "num_hidden_layers": 2,
+  "dropout": 0.1,
+  "num_targets": 1
+}

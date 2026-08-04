@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import math
 import random
+import time
+import warnings
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,23 @@ from tqdm.auto import tqdm
 from kda_mla_stock.configuration import ModelConfig, TrainingConfig
 from kda_mla_stock.data import NormalizationStats
 from kda_mla_stock.metrics import evaluate_predictions
+
+
+class _TrainingDatasetView(Dataset):
+    """Avoid constructing date and symbol metadata for batches used only by the optimizer."""
+
+    def __init__(self, dataset: Dataset) -> None:
+        self.dataset = dataset
+
+    def __len__(self) -> int:
+        return len(self.dataset)
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        training_item = getattr(self.dataset, "training_item", None)
+        if training_item is not None:
+            return training_item(index)
+        item = self.dataset[index]
+        return {"features": item["features"], "target": item["target"]}
 
 
 def set_seed(seed: int) -> None:
@@ -56,15 +75,68 @@ def create_data_loader(
     dataset: Dataset,
     config: TrainingConfig,
     shuffle: bool,
+    training: bool = False,
 ) -> DataLoader:
+    loader_dataset = _TrainingDatasetView(dataset) if training else dataset
+    loader_kwargs: dict[str, Any] = {}
+    if config.num_workers > 0:
+        loader_kwargs["prefetch_factor"] = config.prefetch_factor
+        loader_kwargs["persistent_workers"] = True
     return DataLoader(
-        dataset,
+        loader_dataset,
         batch_size=config.batch_size,
         shuffle=shuffle,
         num_workers=config.num_workers,
-        pin_memory=torch.cuda.is_available(),
-        persistent_workers=config.num_workers > 0,
+        pin_memory=config.pin_memory and torch.cuda.is_available(),
+        **loader_kwargs,
     )
+
+
+def configure_torch_runtime(config: TrainingConfig, device: torch.device) -> None:
+    if device.type != "cuda":
+        return
+    torch.backends.cuda.matmul.allow_tf32 = config.allow_tf32
+    torch.backends.cudnn.allow_tf32 = config.allow_tf32
+    torch.set_float32_matmul_precision("high" if config.allow_tf32 else "highest")
+
+
+def _create_optimizer(
+    model: nn.Module,
+    config: TrainingConfig,
+    device: torch.device,
+) -> tuple[AdamW, bool]:
+    use_fused = config.fused_optimizer and device.type == "cuda"
+    kwargs: dict[str, Any] = {
+        "lr": config.learning_rate,
+        "weight_decay": config.weight_decay,
+    }
+    if use_fused:
+        kwargs["fused"] = True
+    try:
+        return AdamW(model.parameters(), **kwargs), use_fused
+    except (RuntimeError, TypeError):
+        kwargs.pop("fused", None)
+        warnings.warn(
+            "fused AdamW is unavailable; falling back to the standard optimizer",
+            stacklevel=2,
+        )
+        return AdamW(model.parameters(), **kwargs), False
+
+
+def _selection_value(
+    config: TrainingConfig,
+    validation_loss: float,
+    validation_metrics: dict[str, float | int],
+) -> float:
+    if config.selection_metric == "validation_loss":
+        return validation_loss
+    return float(validation_metrics[config.selection_metric])
+
+
+def _is_improved(value: float, best: float, mode: str) -> bool:
+    if not math.isfinite(value):
+        return False
+    return value < best if mode == "min" else value > best
 
 
 def _state_dict_for_safetensors(model: nn.Module) -> dict[str, torch.Tensor]:
@@ -172,14 +244,16 @@ def train_model(
         raise ValueError("validation dataset has no samples")
     set_seed(training_config.seed)
     device = resolve_device(requested_device)
+    configure_torch_runtime(training_config, device)
     model.to(device)
-    train_loader = create_data_loader(datasets["train"], training_config, shuffle=True)
-    valid_loader = create_data_loader(datasets["valid"], training_config, shuffle=False)
-    optimizer = AdamW(
-        model.parameters(),
-        lr=training_config.learning_rate,
-        weight_decay=training_config.weight_decay,
+    train_loader = create_data_loader(
+        datasets["train"],
+        training_config,
+        shuffle=True,
+        training=True,
     )
+    valid_loader = create_data_loader(datasets["valid"], training_config, shuffle=False)
+    optimizer, fused_optimizer = _create_optimizer(model, training_config, device)
     scheduler = CosineAnnealingLR(optimizer, T_max=max(1, training_config.epochs))
     use_scaler = device.type == "cuda" and training_config.mixed_precision == "fp16"
     scaler = torch.amp.GradScaler("cuda", enabled=use_scaler)
@@ -192,6 +266,9 @@ def train_model(
 
     start_epoch = 0
     best_validation_loss = float("inf")
+    best_selection_score = (
+        float("inf") if training_config.selection_mode == "min" else float("-inf")
+    )
     best_epoch = -1
     epochs_without_improvement = 0
     if resume_from is not None:
@@ -209,6 +286,39 @@ def train_model(
                 best_validation_loss = float(state["best_validation_loss"])
                 best_epoch = int(state["best_epoch"])
                 epochs_without_improvement = int(state["epochs_without_improvement"])
+                if state.get("selection_metric") == training_config.selection_metric:
+                    best_selection_score = float(
+                        state.get("best_selection_score", best_validation_loss)
+                    )
+
+    execution_model: nn.Module = model
+    if training_config.compile_mode != "none":
+        if not hasattr(torch, "compile"):
+            warnings.warn("torch.compile is unavailable in this PyTorch build", stacklevel=2)
+        else:
+            execution_model = torch.compile(model, mode=training_config.compile_mode)
+
+    device_name = (
+        torch.cuda.get_device_name(device) if device.type == "cuda" else str(device)
+    )
+    kda_modules = [
+        module for module in model.modules() if module.__class__.__name__ == "KimiDeltaAttention"
+    ]
+    if kda_modules:
+        use_fla = (
+            device.type == "cuda"
+            and training_config.mixed_precision in {"fp16", "bf16"}
+            and all(bool(getattr(module, "fla_available", False)) for module in kda_modules)
+            and all(module.config.attention_backend != "torch" for module in kda_modules)
+        )
+        print(f"KDA execution backend: {'fla-core' if use_fla else 'PyTorch reference'}")
+    print(
+        "runtime: "
+        f"device={device_name}, batch_size={training_config.batch_size}, "
+        f"workers={training_config.num_workers}, fused_adamw={fused_optimizer}, "
+        f"tf32={training_config.allow_tf32 and device.type == 'cuda'}, "
+        f"compile={training_config.compile_mode}"
+    )
 
     writer = SummaryWriter(logdir=str(output_dir / "tensorboard"))
     history_path = output_dir / "history.json"
@@ -216,9 +326,12 @@ def train_model(
     if start_epoch > 0 and history_path.exists():
         history = json.loads(history_path.read_text(encoding="utf-8")).get("history", [])
     for epoch in range(start_epoch, training_config.epochs):
-        model.train()
+        execution_model.train()
         train_loss_sum = 0.0
         sample_count = 0
+        epoch_started_at = time.perf_counter()
+        if device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(device)
         with tqdm(
             train_loader,
             desc=f"Train {epoch + 1}/{training_config.epochs}",
@@ -230,7 +343,7 @@ def train_model(
                 targets = batch["target"].to(device, non_blocking=True)
                 optimizer.zero_grad(set_to_none=True)
                 with _autocast_context(device, training_config.mixed_precision):
-                    predictions = model(features)
+                    predictions = execution_model(features)
                     loss = F.mse_loss(predictions.float(), targets.float())
                 if not torch.isfinite(loss):
                     raise RuntimeError("training loss became non-finite")
@@ -251,21 +364,39 @@ def train_model(
                     refresh=False,
                 )
 
+        training_elapsed_seconds = time.perf_counter() - epoch_started_at
         scheduler.step()
         train_loss = train_loss_sum / sample_count
         validation_loss, validation_predictions = predict_loader(
-            model,
+            execution_model,
             valid_loader,
             device,
             training_config.mixed_precision,
             progress_description=f"Valid {epoch + 1}/{training_config.epochs}",
         )
         validation_metrics = evaluate_predictions(validation_predictions)
+        elapsed_seconds = time.perf_counter() - epoch_started_at
+        samples_per_second = sample_count / training_elapsed_seconds
+        peak_memory_gib = (
+            torch.cuda.max_memory_allocated(device) / (1024**3)
+            if device.type == "cuda"
+            else 0.0
+        )
+        selection_score = _selection_value(
+            training_config,
+            validation_loss,
+            validation_metrics,
+        )
         epoch_record = {
             "epoch": epoch,
             "train_loss": train_loss,
             "validation_loss": validation_loss,
             "learning_rate": optimizer.param_groups[0]["lr"],
+            "elapsed_seconds": elapsed_seconds,
+            "training_elapsed_seconds": training_elapsed_seconds,
+            "samples_per_second": samples_per_second,
+            "peak_memory_gib": peak_memory_gib,
+            "selection_score": selection_score,
             **{f"validation_{key}": value for key, value in validation_metrics.items()},
         }
         history.append(epoch_record)
@@ -273,16 +404,26 @@ def train_model(
         writer.add_scalar("loss/validation", validation_loss, epoch)
         writer.add_scalar("metrics/validation_rank_ic", validation_metrics["rank_ic_mean"], epoch)
         writer.add_scalar("optimizer/learning_rate", optimizer.param_groups[0]["lr"], epoch)
+        writer.add_scalar("performance/samples_per_second", samples_per_second, epoch)
+        if device.type == "cuda":
+            writer.add_scalar("performance/peak_memory_gib", peak_memory_gib, epoch)
         writer.flush()
         print(
             f"epoch={epoch + 1}/{training_config.epochs} "
             f"train_loss={train_loss:.6f} valid_loss={validation_loss:.6f} "
-            f"rank_ic={validation_metrics['rank_ic_mean']:.4f}"
+            f"rank_ic={validation_metrics['rank_ic_mean']:.4f} "
+            f"throughput={samples_per_second:.1f} samples/s "
+            f"peak_memory={peak_memory_gib:.2f} GiB"
         )
 
-        improved = validation_loss < best_validation_loss
+        best_validation_loss = min(best_validation_loss, validation_loss)
+        improved = _is_improved(
+            selection_score,
+            best_selection_score,
+            training_config.selection_mode,
+        )
         if improved:
-            best_validation_loss = validation_loss
+            best_selection_score = selection_score
             best_epoch = epoch
             epochs_without_improvement = 0
             save_model(model, output_dir / "best.safetensors")
@@ -300,6 +441,8 @@ def train_model(
                 "optimizer": optimizer.state_dict(),
                 "scheduler": scheduler.state_dict(),
                 "best_validation_loss": best_validation_loss,
+                "best_selection_score": best_selection_score,
+                "selection_metric": training_config.selection_metric,
                 "best_epoch": best_epoch,
                 "epochs_without_improvement": epochs_without_improvement,
             },
@@ -313,10 +456,13 @@ def train_model(
     writer.close()
     result = {
         "device": str(device),
+        "trainable_parameters": sum(parameter.numel() for parameter in model.parameters()),
         "train_samples": len(datasets["train"]),
         "validation_samples": len(datasets["valid"]),
         "best_epoch": best_epoch,
         "best_validation_loss": best_validation_loss,
+        "selection_metric": training_config.selection_metric,
+        "best_selection_score": best_selection_score,
         "epochs_completed": len(history),
     }
     write_json(result, output_dir / "train_summary.json")

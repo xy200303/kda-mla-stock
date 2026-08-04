@@ -4,7 +4,7 @@ import argparse
 import json
 
 from kda_mla_stock.configuration import ModelConfig
-from kda_mla_stock.modeling import StockForecaster, count_parameters
+from kda_mla_stock.modeling import build_model, count_parameters
 
 
 def main() -> None:
@@ -12,14 +12,12 @@ def main() -> None:
     parser.add_argument("--model-config", default="configs/model-small.json")
     args = parser.parse_args()
     config = ModelConfig.from_json(args.model_config)
-    model = StockForecaster(config)
-    by_component = {
-        "input": count_parameters(model.input_projection) + count_parameters(model.input_norm),
-        "encoder": count_parameters(model.layers),
-        "head": count_parameters(model.final_norm) + count_parameters(model.head),
+    model = build_model(config)
+    report = {
+        "architecture": config.architecture,
         "total": count_parameters(model),
     }
-    print(json.dumps(by_component, indent=2))
+    print(json.dumps(report, indent=2))
 
 
 if __name__ == "__main__":

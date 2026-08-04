@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from kda_mla_stock.configuration import ModelConfig
-from kda_mla_stock.modeling import StockForecaster
+from kda_mla_stock.modeling import StockForecaster, build_model
 
 
 def small_model_config() -> ModelConfig:
@@ -46,3 +47,23 @@ def test_model_accepts_right_padded_attention_mask() -> None:
         predictions = model(features, mask)
     assert predictions.shape == (2, 1)
     assert torch.isfinite(predictions).all()
+
+
+@pytest.mark.parametrize("architecture", ["lstm", "gru", "transformer", "mlp"])
+def test_baseline_model_factory_forward_and_backward(architecture: str) -> None:
+    config = ModelConfig(
+        architecture=architecture,
+        num_features=10,
+        hidden_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        head_dim=8,
+        intermediate_size=64,
+        dropout=0.0,
+    )
+    model = build_model(config)
+    features = torch.randn(3, 12, 10)
+    predictions = model(features)
+    assert predictions.shape == (3, 1)
+    predictions.square().mean().backward()
+    assert any(parameter.grad is not None for parameter in model.parameters())

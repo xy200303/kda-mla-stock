@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import warnings
+from importlib.util import find_spec
 
 import torch
 import torch.nn.functional as F
@@ -102,6 +103,10 @@ class KimiDeltaAttention(nn.Module):
         self.dt_bias = nn.Parameter(torch.zeros(projection_size, dtype=torch.float32))
         self.out_proj = nn.Linear(projection_size, config.hidden_size, bias=False)
         self._warned_fallback = False
+        try:
+            self.fla_available = find_spec("fla.ops.kda") is not None
+        except ModuleNotFoundError:
+            self.fla_available = False
 
     def _shape_heads(self, hidden_states: torch.Tensor) -> torch.Tensor:
         batch_size, sequence_length, _ = hidden_states.shape
@@ -125,9 +130,7 @@ class KimiDeltaAttention(nn.Module):
             return False
         if attention_mask is not None and not bool(attention_mask.all()):
             return False
-        try:
-            from fla.ops.kda import chunk_kda  # noqa: F401
-        except ImportError:
+        if not self.fla_available:
             if self.config.attention_backend == "fla":
                 raise RuntimeError("attention_backend=fla requires fla-core") from None
             return False
@@ -168,9 +171,10 @@ class KimiDeltaAttention(nn.Module):
         raw_beta: torch.Tensor,
         attention_mask: torch.Tensor | None,
     ) -> torch.Tensor:
-        if not self._warned_fallback and query.shape[1] > 512:
+        if not self._warned_fallback and query.is_cuda:
             warnings.warn(
-                "KDA is using the slow PyTorch path; install fla-core on CUDA for training.",
+                "KDA is using the slow PyTorch path on CUDA; install fla-core or set "
+                "attention_backend=fla to fail fast.",
                 stacklevel=2,
             )
             self._warned_fallback = True
@@ -402,6 +406,186 @@ class StockForecaster(nn.Module):
             batch_indices = torch.arange(features.shape[0], device=features.device)
             pooled = hidden_states[batch_indices, last_indices]
         return self.head(pooled)
+
+
+class RecurrentForecaster(nn.Module):
+    """LSTM or GRU baseline using the same input windows and prediction head."""
+
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__()
+        config.validate()
+        if config.architecture not in {"lstm", "gru"}:
+            raise ValueError("RecurrentForecaster requires architecture=lstm or gru")
+        self.config = config
+        recurrent_class = nn.LSTM if config.architecture == "lstm" else nn.GRU
+        self.recurrent = recurrent_class(
+            input_size=config.num_features,
+            hidden_size=config.hidden_size,
+            num_layers=config.num_hidden_layers,
+            batch_first=True,
+            dropout=config.dropout if config.num_hidden_layers > 1 else 0.0,
+        )
+        self.head = nn.Sequential(
+            nn.LayerNorm(config.hidden_size),
+            nn.Linear(config.hidden_size, config.hidden_size // 2),
+            nn.SiLU(),
+            nn.Dropout(config.dropout),
+            nn.Linear(config.hidden_size // 2, config.num_targets),
+        )
+
+    def forward(
+        self,
+        features: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        _validate_features(features, attention_mask, self.config.num_features)
+        hidden_states, _ = self.recurrent(features)
+        pooled = _last_valid_state(hidden_states, attention_mask)
+        return self.head(pooled)
+
+
+class TransformerForecaster(nn.Module):
+    """Causal Transformer encoder baseline."""
+
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__()
+        config.validate()
+        if config.architecture != "transformer":
+            raise ValueError("TransformerForecaster requires architecture=transformer")
+        self.config = config
+        self.input_projection = nn.Linear(config.num_features, config.hidden_size)
+        layer = nn.TransformerEncoderLayer(
+            d_model=config.hidden_size,
+            nhead=config.num_attention_heads,
+            dim_feedforward=config.intermediate_size,
+            dropout=config.dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(
+            layer,
+            num_layers=config.num_hidden_layers,
+            norm=nn.LayerNorm(config.hidden_size),
+            enable_nested_tensor=False,
+        )
+        self.head = nn.Linear(config.hidden_size, config.num_targets)
+
+    def forward(
+        self,
+        features: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        _validate_features(features, attention_mask, self.config.num_features)
+        hidden_states = self.input_projection(features)
+        hidden_states = hidden_states + _sinusoidal_positions(hidden_states)
+        sequence_length = features.shape[1]
+        causal_mask = torch.ones(
+            sequence_length,
+            sequence_length,
+            dtype=torch.bool,
+            device=features.device,
+        ).triu(1)
+        padding_mask = None if attention_mask is None else ~attention_mask.bool()
+        hidden_states = self.encoder(
+            hidden_states,
+            mask=causal_mask,
+            src_key_padding_mask=padding_mask,
+        )
+        return self.head(_last_valid_state(hidden_states, attention_mask))
+
+
+class TemporalMLPForecaster(nn.Module):
+    """Low-cost baseline over the last, mean, and volatility states of a window."""
+
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__()
+        config.validate()
+        if config.architecture != "mlp":
+            raise ValueError("TemporalMLPForecaster requires architecture=mlp")
+        self.config = config
+        layers: list[nn.Module] = []
+        input_size = config.num_features * 3
+        for layer_index in range(config.num_hidden_layers):
+            layers.extend(
+                [
+                    nn.Linear(
+                        input_size if layer_index == 0 else config.hidden_size,
+                        config.hidden_size,
+                    ),
+                    nn.GELU(),
+                    nn.Dropout(config.dropout),
+                ]
+            )
+        layers.append(nn.Linear(config.hidden_size, config.num_targets))
+        self.network = nn.Sequential(*layers)
+
+    def forward(
+        self,
+        features: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        _validate_features(features, attention_mask, self.config.num_features)
+        last = _last_valid_state(features, attention_mask)
+        if attention_mask is None:
+            mean = features.mean(dim=1)
+            std = features.std(dim=1, unbiased=False)
+        else:
+            weights = attention_mask.unsqueeze(-1).to(features.dtype)
+            count = weights.sum(dim=1).clamp_min(1.0)
+            mean = (features * weights).sum(dim=1) / count
+            variance = ((features - mean.unsqueeze(1)).square() * weights).sum(dim=1) / count
+            std = variance.sqrt()
+        return self.network(torch.cat((last, mean, std), dim=-1))
+
+
+def _validate_features(
+    features: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    num_features: int,
+) -> None:
+    if features.ndim != 3 or features.shape[-1] != num_features:
+        raise ValueError(f"features must have shape [batch, sequence, {num_features}]")
+    if attention_mask is not None and attention_mask.shape != features.shape[:2]:
+        raise ValueError("attention_mask must match the first two feature dimensions")
+
+
+def _last_valid_state(
+    hidden_states: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+) -> torch.Tensor:
+    if attention_mask is None:
+        return hidden_states[:, -1]
+    last_indices = attention_mask.long().sum(dim=1).sub(1).clamp_min(0)
+    batch_indices = torch.arange(hidden_states.shape[0], device=hidden_states.device)
+    return hidden_states[batch_indices, last_indices]
+
+
+def _sinusoidal_positions(hidden_states: torch.Tensor) -> torch.Tensor:
+    sequence_length, hidden_size = hidden_states.shape[1:]
+    positions = torch.arange(sequence_length, device=hidden_states.device).float().unsqueeze(1)
+    frequencies = torch.exp(
+        torch.arange(0, hidden_size, 2, device=hidden_states.device).float()
+        * (-torch.log(torch.tensor(10_000.0, device=hidden_states.device)) / hidden_size)
+    )
+    encoding = hidden_states.new_zeros(sequence_length, hidden_size)
+    encoding[:, 0::2] = torch.sin(positions * frequencies).to(hidden_states.dtype)
+    encoding[:, 1::2] = torch.cos(positions * frequencies[: hidden_size // 2]).to(
+        hidden_states.dtype
+    )
+    return encoding.unsqueeze(0)
+
+
+def build_model(config: ModelConfig) -> nn.Module:
+    if config.architecture == "kda_mla":
+        return StockForecaster(config)
+    if config.architecture in {"lstm", "gru"}:
+        return RecurrentForecaster(config)
+    if config.architecture == "transformer":
+        return TransformerForecaster(config)
+    if config.architecture == "mlp":
+        return TemporalMLPForecaster(config)
+    raise ValueError(f"unsupported architecture: {config.architecture}")
 
 
 def count_parameters(model: nn.Module) -> int:

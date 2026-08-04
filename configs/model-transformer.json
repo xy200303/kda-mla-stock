@@ -1,0 +1,11 @@
+{
+  "architecture": "transformer",
+  "num_features": 10,
+  "hidden_size": 256,
+  "num_hidden_layers": 4,
+  "num_attention_heads": 8,
+  "head_dim": 32,
+  "intermediate_size": 1024,
+  "dropout": 0.1,
+  "num_targets": 1
+}

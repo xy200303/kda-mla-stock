@@ -1,0 +1,12 @@
+{
+  "experiments": [
+    {"name": "kda-mla-fast", "model_config": "configs/model-fast.json"},
+    {"name": "kda-mla-full", "model_config": "configs/model-small.json"},
+    {"name": "kda-only", "model_config": "configs/model-kda-only.json"},
+    {"name": "mla-only", "model_config": "configs/model-mla-only.json"},
+    {"name": "lstm", "model_config": "configs/model-lstm.json"},
+    {"name": "gru", "model_config": "configs/model-gru.json"},
+    {"name": "transformer", "model_config": "configs/model-transformer.json"},
+    {"name": "mlp", "model_config": "configs/model-mlp.json"}
+  ]
+}

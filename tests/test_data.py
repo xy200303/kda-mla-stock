@@ -70,3 +70,15 @@ def test_time_splits_purge_labels_crossing_boundaries(market_frame: pd.DataFrame
     sample = train_dataset[0]
     assert sample["features"].shape == (8, len(FEATURE_COLUMNS))
     assert sample["target"].shape == (1,)
+
+    strided = build_window_datasets(
+        engineered,
+        stats,
+        sequence_length=8,
+        train_end=train_end,
+        valid_end=valid_end,
+        train_stride=5,
+    )
+    assert len(strided["train"]) < len(datasets["train"])
+    assert len(strided["valid"]) == len(datasets["valid"])
+    assert len(strided["test"]) == len(datasets["test"])
