@@ -61,7 +61,8 @@ python scripts/prepare_qlib_real.py --force-download
 
 ## 查看损失曲线
 
-训练会把 loss、验证集 Rank IC 和学习率写入 TensorBoard：
+训练终端使用 `tqdm` 按 batch 显示进度、当前 loss、平均 loss 和学习率，同时把 loss、验证集
+Rank IC 和学习率写入 TensorBoard：
 
 ```bash
 tensorboard --logdir outputs/kda-mla-small/tensorboard --host 0.0.0.0 --port 6006

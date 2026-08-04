@@ -57,6 +57,7 @@ def main() -> None:
         loader,
         device,
         training_config.mixed_precision,
+        progress_description=f"Evaluate {args.split}",
     )
     prediction_metrics = evaluate_predictions(predictions)
     prediction_metrics["loss"] = loss

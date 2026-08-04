@@ -15,6 +15,7 @@ dependencies = [
   "tensorboard>=2.18",
   "tensorboardX>=2.6",
   "torch>=2.3",
+  "tqdm>=4.66",
 ]
 
 [project.optional-dependencies]

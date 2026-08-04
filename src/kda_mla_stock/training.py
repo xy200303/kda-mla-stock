@@ -17,6 +17,7 @@ from torch import nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, Dataset
+from tqdm.auto import tqdm
 
 from kda_mla_stock.configuration import ModelConfig, TrainingConfig
 from kda_mla_stock.data import NormalizationStats
@@ -111,12 +112,24 @@ def predict_loader(
     loader: DataLoader,
     device: torch.device,
     mixed_precision: str = "no",
+    progress_description: str | None = None,
 ) -> tuple[float, pd.DataFrame]:
     model.eval()
     total_loss = 0.0
     total_samples = 0
     rows: list[pd.DataFrame] = []
-    for batch in loader:
+    batches = (
+        tqdm(
+            loader,
+            desc=progress_description,
+            unit="batch",
+            dynamic_ncols=True,
+            leave=False,
+        )
+        if progress_description
+        else loader
+    )
+    for batch in batches:
         features = batch["features"].to(device, non_blocking=True)
         targets = batch["target"].to(device, non_blocking=True)
         with _autocast_context(device, mixed_precision):
@@ -125,6 +138,8 @@ def predict_loader(
         batch_size = features.shape[0]
         total_loss += float(loss.item())
         total_samples += batch_size
+        if progress_description:
+            batches.set_postfix(loss=f"{total_loss / total_samples:.6f}", refresh=False)
         dates = pd.to_datetime(batch["date"].cpu().numpy())
         rows.append(
             pd.DataFrame(
@@ -204,22 +219,37 @@ def train_model(
         model.train()
         train_loss_sum = 0.0
         sample_count = 0
-        for batch in train_loader:
-            features = batch["features"].to(device, non_blocking=True)
-            targets = batch["target"].to(device, non_blocking=True)
-            optimizer.zero_grad(set_to_none=True)
-            with _autocast_context(device, training_config.mixed_precision):
-                predictions = model(features)
-                loss = F.mse_loss(predictions.float(), targets.float())
-            if not torch.isfinite(loss):
-                raise RuntimeError("training loss became non-finite")
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
-            scaler.step(optimizer)
-            scaler.update()
-            train_loss_sum += float(loss.item()) * features.shape[0]
-            sample_count += features.shape[0]
+        with tqdm(
+            train_loader,
+            desc=f"Train {epoch + 1}/{training_config.epochs}",
+            unit="batch",
+            dynamic_ncols=True,
+        ) as progress:
+            for batch_index, batch in enumerate(progress, start=1):
+                features = batch["features"].to(device, non_blocking=True)
+                targets = batch["target"].to(device, non_blocking=True)
+                optimizer.zero_grad(set_to_none=True)
+                with _autocast_context(device, training_config.mixed_precision):
+                    predictions = model(features)
+                    loss = F.mse_loss(predictions.float(), targets.float())
+                if not torch.isfinite(loss):
+                    raise RuntimeError("training loss became non-finite")
+                if batch_index == 1:
+                    progress.set_postfix(stage="backward", refresh=True)
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
+                scaler.step(optimizer)
+                scaler.update()
+                batch_loss = float(loss.item())
+                train_loss_sum += batch_loss * features.shape[0]
+                sample_count += features.shape[0]
+                progress.set_postfix(
+                    loss=f"{batch_loss:.6f}",
+                    average=f"{train_loss_sum / sample_count:.6f}",
+                    lr=f"{optimizer.param_groups[0]['lr']:.2e}",
+                    refresh=False,
+                )
 
         scheduler.step()
         train_loss = train_loss_sum / sample_count
@@ -228,6 +258,7 @@ def train_model(
             valid_loader,
             device,
             training_config.mixed_precision,
+            progress_description=f"Valid {epoch + 1}/{training_config.epochs}",
         )
         validation_metrics = evaluate_predictions(validation_predictions)
         epoch_record = {
