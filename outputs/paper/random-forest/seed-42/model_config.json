@@ -1,0 +1,18 @@
+{
+  "architecture": "random_forest",
+  "aggregation_windows": [
+    5,
+    20,
+    60,
+    256
+  ],
+  "params": {
+    "n_estimators": 300,
+    "max_depth": 12,
+    "min_samples_leaf": 20,
+    "max_features": 0.8,
+    "bootstrap": true,
+    "n_jobs": -1
+  },
+  "feature_scheme": "last_mean_std"
+}

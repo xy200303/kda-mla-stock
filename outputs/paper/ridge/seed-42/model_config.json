@@ -1,0 +1,13 @@
+{
+  "architecture": "ridge",
+  "aggregation_windows": [
+    5,
+    20,
+    60,
+    256
+  ],
+  "params": {
+    "alpha": 10.0
+  },
+  "feature_scheme": "last_mean_std"
+}

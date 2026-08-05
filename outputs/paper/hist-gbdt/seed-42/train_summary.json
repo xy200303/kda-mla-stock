@@ -1,0 +1,12 @@
+{
+  "architecture": "hist_gbdt",
+  "seed": 42,
+  "trainable_parameters": 18300,
+  "feature_count": 90,
+  "train_samples": 145745,
+  "validation_samples": 63751,
+  "fit_seconds": 1.5391307959798723,
+  "best_epoch": 0,
+  "best_validation_loss": 0.0033731118758190243,
+  "best_validation_rank_ic": -0.01608695823223636
+}

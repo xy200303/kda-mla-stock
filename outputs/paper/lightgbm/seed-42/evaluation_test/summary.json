@@ -1,0 +1,72 @@
+{
+  "split": "test",
+  "prediction_metrics": {
+    "samples": 66176,
+    "dates": 247,
+    "mse": 0.003429885671368886,
+    "mae": 0.0403200109770301,
+    "direction_accuracy": 0.4885608075435203,
+    "ic_mean": 0.02243209518012041,
+    "rank_ic_mean": 0.007978589693199627,
+    "rank_ic_std": 0.11203194132920394,
+    "rank_icir_annualized": 1.1305363751146564,
+    "loss": 0.003429885671368886
+  },
+  "diagnostic_backtest_metrics": {
+    "periods": 50,
+    "total_return": 0.10712402897886664,
+    "annualized_return": 0.10802573388835146,
+    "annualized_sharpe": 1.1314351009151495,
+    "max_drawdown": -0.043330870138347244,
+    "average_turnover": 0.815479817383258
+  },
+  "architecture": "lightgbm",
+  "prediction_seconds": 0.016220581019297242,
+  "qlib_backtest": {
+    "config": {
+      "provider_uri": "~/.qlib/qlib_data/cn_data",
+      "region": "cn",
+      "benchmark": "SH000300",
+      "topk": 50,
+      "n_drop": 10,
+      "hold_thresh": 5,
+      "account": 100000000.0,
+      "deal_price": "open",
+      "limit_threshold": 0.095,
+      "open_cost": 0.0005,
+      "close_cost": 0.0015,
+      "min_cost": 5.0
+    },
+    "signal_lag_trading_days": 1,
+    "start_time": "2019-09-16",
+    "end_time": "2020-09-21",
+    "trading_days": 248,
+    "risk_metrics": {
+      "strategy_with_cost_mean": 0.0006656361037988834,
+      "strategy_with_cost_std": 0.014961494465002011,
+      "strategy_with_cost_annualized_return": 0.17159807227323864,
+      "strategy_with_cost_information_ratio": 0.686357481743223,
+      "strategy_with_cost_max_drawdown": -0.14332464641435394,
+      "benchmark_mean": 0.0006710790033497283,
+      "benchmark_std": 0.01393463451284227,
+      "benchmark_annualized_return": 0.1731157406854289,
+      "benchmark_information_ratio": 0.742961906834381,
+      "benchmark_max_drawdown": -0.16079470913145077,
+      "excess_without_cost_mean": 0.00016382647961132868,
+      "excess_without_cost_std": 0.0049928081187029846,
+      "excess_without_cost_annualized_return": 0.039757495585434954,
+      "excess_without_cost_information_ratio": 0.5062064817040476,
+      "excess_without_cost_max_drawdown": -0.11313916802918522,
+      "excess_with_cost_mean": -3.208121882369852e-06,
+      "excess_with_cost_std": 0.0050013830961508875,
+      "excess_with_cost_annualized_return": -0.0007632428146741033,
+      "excess_with_cost_information_ratio": -0.009895761418958135,
+      "excess_with_cost_max_drawdown": -0.12118730469245298
+    },
+    "trade_indicators": {
+      "ffr": 1.0,
+      "pa": 0.0,
+      "pos": 0.0
+    }
+  }
+}

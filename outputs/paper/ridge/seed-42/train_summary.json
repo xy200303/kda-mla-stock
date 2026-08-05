@@ -1,0 +1,12 @@
+{
+  "architecture": "ridge",
+  "seed": 42,
+  "trainable_parameters": 91,
+  "feature_count": 90,
+  "train_samples": 145745,
+  "validation_samples": 63751,
+  "fit_seconds": 0.06971258181147277,
+  "best_epoch": 0,
+  "best_validation_loss": 0.003343582235210772,
+  "best_validation_rank_ic": 0.0051313655949835
+}

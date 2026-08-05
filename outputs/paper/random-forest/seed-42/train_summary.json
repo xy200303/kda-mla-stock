@@ -1,0 +1,12 @@
+{
+  "architecture": "random_forest",
+  "seed": 42,
+  "trainable_parameters": 216630,
+  "feature_count": 90,
+  "train_samples": 145745,
+  "validation_samples": 63751,
+  "fit_seconds": 96.11450653197244,
+  "best_epoch": 0,
+  "best_validation_loss": 0.0033500557957267182,
+  "best_validation_rank_ic": -0.023618720768848515
+}

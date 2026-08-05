@@ -1,0 +1,11 @@
+{
+  "device": "cuda",
+  "trainable_parameters": 634113,
+  "train_samples": 145745,
+  "validation_samples": 63751,
+  "best_epoch": 1,
+  "best_validation_loss": 0.003321378508516709,
+  "selection_metric": "rank_ic_mean",
+  "best_selection_score": 0.030375053498892482,
+  "epochs_completed": 8
+}

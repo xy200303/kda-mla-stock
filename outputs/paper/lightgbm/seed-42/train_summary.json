@@ -1,0 +1,12 @@
+{
+  "architecture": "lightgbm",
+  "seed": 42,
+  "trainable_parameters": 31,
+  "feature_count": 90,
+  "train_samples": 145745,
+  "validation_samples": 63751,
+  "fit_seconds": 0.6512728750240058,
+  "best_epoch": 1,
+  "best_validation_loss": 0.0032960698193071746,
+  "best_validation_rank_ic": -0.03221312850517614
+}
