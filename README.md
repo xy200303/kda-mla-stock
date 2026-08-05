@@ -64,18 +64,27 @@ bash scripts/train_real.sh
 python scripts/prepare_qlib_real.py --force-download
 ```
 
-下载使用固定的 `.part` 临时文件，并在网络中断后自动断点续传（默认最多 8 次）。如果所有重试都失败，
-直接重新执行同一命令即可从已下载位置继续；可通过 `--download-retries` 和 `--download-timeout`
-调整重试次数和读取超时。下载 Session 不读取系统代理或当前 shell 的代理环境变量。
+在线下载完全使用 PyQLib 官方 `GetData.qlib_data()`，项目不再改写下载地址、网络请求、代理或重试逻辑。
 
-脚本默认通过 `https://gh-proxy.com` 下载 PyQLib 生成的官方 GitHub Release URL，并支持对已有 `.part`
-文件继续断点续传。该镜像是第三方传输服务，不是 Qlib 官方数据源；需要绕过镜像、直接访问官方地址时使用：
+网络不稳定时也可以在浏览器或其他机器上手动下载官方
+[`qlib_data_cn_1d_latest.zip`](https://github.com/SunsetWolf/qlib_dataset/releases/download/v2/qlib_data_cn_1d_latest.zip)，
+上传到项目的 `data/qlib_archives/` 目录：
 
 ```bash
-python scripts/prepare_qlib_real.py --force-download --no-github-mirror
+mkdir -p data/qlib_archives
+python scripts/prepare_qlib_real.py --force-download
 ```
 
-需要临时替换镜像时传入 `--github-mirror https://镜像域名`。
+脚本会优先识别本地 ZIP、检查文件格式并调用 PyQLib 官方 `GetData._unzip()` 解压；找不到本地包时
+才会进行官方在线下载。美股压缩包名为 `qlib_data_us_1d_latest.zip`。需要把压缩包放在其他位置时使用：
+
+```bash
+python scripts/prepare_qlib_real.py \
+  --archive-dir /root/autodl-tmp/qlib_archives \
+  --force-download
+```
+
+手动上传的 ZIP 在解压后会保留。目标目录已经存在时，不传 `--force-download` 会继续复用现有数据。
 
 它根据下载到的真实交易日自动划分数据：最后 252 个交易日作为测试集，之前 252 个交易日作为验证集，
 更早的数据用于训练。生成的实际配置保存在 `data/train-real.json`。
