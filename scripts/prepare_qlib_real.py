@@ -21,13 +21,12 @@ def _remote_size(content_range: str | None) -> int | None:
     return int(total) if total.isdigit() else None
 
 
-def _resolve_proxies(url: str, proxy: str | None) -> tuple[dict[str, str], str]:
+def _resolve_proxies(url: str, proxy: str | None) -> tuple[dict[str, str] | None, str]:
     from requests.utils import get_environ_proxies
 
     if proxy:
         return {"http": proxy, "https": proxy}, "explicit"
-    proxies = {str(name): str(value) for name, value in get_environ_proxies(url).items()}
-    return proxies, "system" if proxies else "direct"
+    return None, "system" if get_environ_proxies(url) else "direct"
 
 
 def _remote_exists(
@@ -45,9 +44,9 @@ def _remote_exists(
             with requests.get(
                 url,
                 headers={"Range": "bytes=0-0"},
-                proxies=proxies or None,
+                proxies=proxies,
                 stream=True,
-                timeout=(15, timeout),
+                timeout=timeout,
             ) as response:
                 if response.status_code == 404:
                     return False
@@ -86,9 +85,9 @@ def _download_with_resume(
             with requests.get(
                 url,
                 headers=headers,
-                proxies=proxies or None,
+                proxies=proxies,
                 stream=True,
-                timeout=(15, timeout),
+                timeout=timeout,
             ) as response:
                 if response.status_code == 416:
                     total = _remote_size(response.headers.get("Content-Range"))
@@ -255,7 +254,7 @@ def main() -> None:
         "--download-timeout",
         type=float,
         default=120.0,
-        help="HTTP read timeout in seconds",
+        help="HTTP connection and read timeout in seconds",
     )
     parser.add_argument(
         "--proxy",

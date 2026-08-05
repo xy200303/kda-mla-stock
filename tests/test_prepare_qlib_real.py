@@ -21,7 +21,7 @@ def test_remote_size() -> None:
     assert _remote_size(None) is None
 
 
-def test_proxy_override_does_not_expose_environment(
+def test_system_proxy_is_delegated_to_requests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("HTTPS_PROXY", "http://system-proxy.invalid:8080")
@@ -31,7 +31,7 @@ def test_proxy_override_does_not_expose_environment(
         "http://explicit-proxy.invalid:3128",
     )
 
-    assert system_proxies["https"] == "http://system-proxy.invalid:8080"
+    assert system_proxies is None
     assert system_mode == "system"
     assert explicit_proxies == {
         "http": "http://explicit-proxy.invalid:3128",
