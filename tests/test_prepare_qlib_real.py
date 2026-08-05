@@ -9,7 +9,9 @@ import pytest
 from scripts.prepare_qlib_real import (
     _download_data_resumably,
     _download_with_resume,
+    _remote_exists,
     _remote_size,
+    _resolve_proxies,
 )
 
 
@@ -17,6 +19,25 @@ def test_remote_size() -> None:
     assert _remote_size("bytes 10-19/100") == 100
     assert _remote_size("bytes */100") == 100
     assert _remote_size(None) is None
+
+
+def test_proxy_override_does_not_expose_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HTTPS_PROXY", "http://system-proxy.invalid:8080")
+    system_proxies, system_mode = _resolve_proxies("https://github.com/file.zip", None)
+    explicit_proxies, explicit_mode = _resolve_proxies(
+        "https://github.com/file.zip",
+        "http://explicit-proxy.invalid:3128",
+    )
+
+    assert system_proxies["https"] == "http://system-proxy.invalid:8080"
+    assert system_mode == "system"
+    assert explicit_proxies == {
+        "http": "http://explicit-proxy.invalid:3128",
+        "https": "http://explicit-proxy.invalid:3128",
+    }
+    assert explicit_mode == "explicit"
 
 
 def test_download_resumes_partial_file(tmp_path: Path) -> None:
@@ -64,6 +85,41 @@ def test_download_resumes_partial_file(tmp_path: Path) -> None:
     assert destination.read_bytes() == payload
 
 
+def test_remote_probe_uses_range_request() -> None:
+    observed_ranges: list[str | None] = []
+
+    class ProbeHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            observed_ranges.append(self.headers.get("Range"))
+            self.send_response(206)
+            self.send_header("Content-Length", "1")
+            self.send_header("Content-Range", "bytes 0-0/100")
+            self.end_headers()
+            self.wfile.write(b"x")
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), ProbeHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        exists = _remote_exists(
+            f"http://{host}:{port}/dataset.zip",
+            retries=1,
+            timeout=5,
+            proxy=None,
+        )
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+    assert exists is True
+    assert observed_ranges == ["bytes=0-0"]
+
+
 def test_download_data_reuses_legacy_partial_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -98,6 +154,7 @@ def test_download_data_reuses_legacy_partial_file(
             False,
             retries=1,
             timeout=1,
+            proxy=None,
         )
 
     assert not legacy.exists()

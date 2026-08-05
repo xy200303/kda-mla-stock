@@ -21,12 +21,55 @@ def _remote_size(content_range: str | None) -> int | None:
     return int(total) if total.isdigit() else None
 
 
+def _resolve_proxies(url: str, proxy: str | None) -> tuple[dict[str, str], str]:
+    from requests.utils import get_environ_proxies
+
+    if proxy:
+        return {"http": proxy, "https": proxy}, "explicit"
+    proxies = {str(name): str(value) for name, value in get_environ_proxies(url).items()}
+    return proxies, "system" if proxies else "direct"
+
+
+def _remote_exists(
+    url: str,
+    *,
+    retries: int,
+    timeout: float,
+    proxy: str | None,
+) -> bool:
+    import requests
+
+    proxies, proxy_mode = _resolve_proxies(url, proxy)
+    for attempt in range(1, retries + 1):
+        try:
+            with requests.get(
+                url,
+                headers={"Range": "bytes=0-0"},
+                proxies=proxies or None,
+                stream=True,
+                timeout=(15, timeout),
+            ) as response:
+                if response.status_code == 404:
+                    return False
+                response.raise_for_status()
+                print(f"Qlib dataset probe succeeded (proxy={proxy_mode})")
+                return True
+        except requests.RequestException as error:
+            if attempt == retries:
+                raise RuntimeError(f"Qlib dataset probe failed after {retries} attempts") from error
+            delay = min(30, 2 ** (attempt - 1))
+            print(f"dataset probe interrupted ({error}); retrying in {delay}s")
+            time.sleep(delay)
+    return False
+
+
 def _download_with_resume(
     url: str,
     target_path: str | Path,
     *,
     retries: int,
     timeout: float,
+    proxy: str | None = None,
     chunk_size: int = 1024 * 1024,
 ) -> None:
     import requests
@@ -34,6 +77,7 @@ def _download_with_resume(
 
     destination = Path(target_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
+    proxies, proxy_mode = _resolve_proxies(url, proxy)
 
     for attempt in range(1, retries + 1):
         downloaded = destination.stat().st_size if destination.exists() else 0
@@ -42,6 +86,7 @@ def _download_with_resume(
             with requests.get(
                 url,
                 headers=headers,
+                proxies=proxies or None,
                 stream=True,
                 timeout=(15, timeout),
             ) as response:
@@ -58,9 +103,7 @@ def _download_with_resume(
                 resumed = downloaded > 0 and response.status_code == 206
                 if resumed:
                     content_range = response.headers.get("Content-Range")
-                    if not content_range or not content_range.startswith(
-                        f"bytes {downloaded}-"
-                    ):
+                    if not content_range or not content_range.startswith(f"bytes {downloaded}-"):
                         destination.write_bytes(b"")
                         raise requests.exceptions.RequestException(
                             "the server returned an invalid byte range; restarting"
@@ -80,7 +123,8 @@ def _download_with_resume(
                 action = "resuming" if resumed else "downloading"
                 print(
                     f"{action} {destination.name} "
-                    f"(attempt {attempt}/{retries}, {initial:,} bytes already saved)"
+                    f"(attempt {attempt}/{retries}, proxy={proxy_mode}, "
+                    f"{initial:,} bytes already saved)"
                 )
                 with tqdm(
                     total=total,
@@ -111,10 +155,7 @@ def _download_with_resume(
                 ) from error
             delay = min(30, 2 ** (attempt - 1))
             saved = destination.stat().st_size if destination.exists() else 0
-            print(
-                f"download interrupted ({error}); retrying in {delay}s "
-                f"from {saved:,} bytes"
-            )
+            print(f"download interrupted ({error}); retrying in {delay}s from {saved:,} bytes")
             time.sleep(delay)
 
 
@@ -126,6 +167,7 @@ def _download_data_resumably(
     *,
     retries: int,
     timeout: float,
+    proxy: str | None,
 ) -> None:
     destination_dir = Path(target_dir).expanduser()
     destination_dir.mkdir(exist_ok=True, parents=True)
@@ -146,6 +188,7 @@ def _download_data_resumably(
         partial_path,
         retries=retries,
         timeout=timeout,
+        proxy=proxy,
     )
     try:
         with zipfile.ZipFile(partial_path) as archive:
@@ -158,6 +201,7 @@ def _download_data_resumably(
             partial_path,
             retries=retries,
             timeout=timeout,
+            proxy=proxy,
         )
         with zipfile.ZipFile(partial_path) as archive:
             archive.infolist()
@@ -213,6 +257,11 @@ def main() -> None:
         default=120.0,
         help="HTTP read timeout in seconds",
     )
+    parser.add_argument(
+        "--proxy",
+        default=None,
+        help="Override the system HTTP(S) proxy for the Qlib download",
+    )
     args = parser.parse_args()
 
     if args.download_retries < 1:
@@ -228,6 +277,14 @@ def main() -> None:
     provider_uri = Path(args.provider_uri).expanduser()
 
     class ResumableGetData(GetData):
+        def check_dataset(self, file_name: str) -> bool:
+            return _remote_exists(
+                self.merge_remote_url(file_name),
+                retries=args.download_retries,
+                timeout=args.download_timeout,
+                proxy=args.proxy,
+            )
+
         def download_data(
             self,
             file_name: str,
@@ -241,6 +298,7 @@ def main() -> None:
                 delete_old,
                 retries=args.download_retries,
                 timeout=args.download_timeout,
+                proxy=args.proxy,
             )
 
     downloader = ResumableGetData(delete_zip_file=True)
