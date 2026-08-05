@@ -5,8 +5,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from kda_mla_stock.qlib_evaluation import predictions_to_qlib_signal
-from kda_mla_stock.reporting import plot_prediction_diagnostics, plot_training_history
+from kda_mla_stock.evaluation.backtests import predictions_to_qlib_signal
+from kda_mla_stock.evaluation.reporting import (
+    plot_prediction_diagnostics,
+    plot_training_history,
+)
 
 
 def _predictions() -> pd.DataFrame:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from kda_mla_stock.configuration import ModelConfig
+from kda_mla_stock.core.config import ModelConfig
 from kda_mla_stock.models import build_model, count_parameters
 
 

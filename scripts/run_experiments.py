@@ -2,16 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-
-def _run(command: list[str], dry_run: bool) -> None:
-    print("$ " + " ".join(command), flush=True)
-    if not dry_run:
-        subprocess.run(command, check=True)
+from kda_mla_stock.orchestration import ExperimentRunner
 
 
 def _load_experiments(path: str | Path) -> list[dict[str, Any]]:
@@ -57,6 +52,7 @@ def main() -> None:
     )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    runner = ExperimentRunner(dry_run=args.dry_run)
 
     positive_arguments = {
         "batch-size": args.batch_size,
@@ -127,7 +123,7 @@ def main() -> None:
                     checkpoint = run_dir / "last.safetensors"
                     if kind == "neural" and checkpoint.exists():
                         train_command.extend(["--resume", str(run_dir)])
-                    _run(train_command, args.dry_run)
+                    runner.run(train_command)
 
             if args.stage in {"all", "evaluate"}:
                 evaluate_command = [
@@ -144,7 +140,7 @@ def main() -> None:
                     evaluate_command.extend(["--device", args.device])
                 if args.skip_qlib:
                     evaluate_command.append("--skip-qlib")
-                _run(evaluate_command, args.dry_run)
+                runner.run(evaluate_command)
 
     if args.stage in {"all", "evaluate"}:
         compare_command = [
@@ -155,7 +151,7 @@ def main() -> None:
             "--run-dirs",
             *(str(path) for path in run_directories),
         ]
-        _run(compare_command, args.dry_run)
+        runner.run(compare_command)
 
 
 if __name__ == "__main__":

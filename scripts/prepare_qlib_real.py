@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from kda_mla_stock.configuration import TrainingConfig
-from kda_mla_stock.qlib_data import export_qlib_market
+from kda_mla_stock.core.config import TrainingConfig
+from kda_mla_stock.data.qlib import export_qlib_market
 
 
 def _automatic_boundaries(

@@ -4,10 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kda_mla_stock.configuration import TrainingConfig
+from kda_mla_stock.core.config import TrainingConfig
 from kda_mla_stock.data import MarketWindowStore, StockWindowDataset, WindowReference
-from kda_mla_stock.datasets import build_tabular_dataset
-from kda_mla_stock.engine import Trainer, Valer
+from kda_mla_stock.data.tabular import build_tabular_dataset
 from kda_mla_stock.models import (
     TraditionalModelConfig,
     build_estimator,
@@ -15,6 +14,7 @@ from kda_mla_stock.models import (
     load_estimator,
     save_estimator,
 )
+from kda_mla_stock.orchestration import EvaluationRunner, TrainRunner
 
 
 def _window_dataset() -> tuple[StockWindowDataset, np.ndarray]:
@@ -137,8 +137,8 @@ def test_unified_trainer_and_valer_support_sklearn(
         params={"alpha": 1.0},
     )
 
-    train_summary = Trainer(model_config, training_config).run()
-    evaluation = Valer(output_dir, requested_device="cpu").run("test")
+    train_summary = TrainRunner(model_config, training_config).run()
+    evaluation = EvaluationRunner(output_dir, requested_device="cpu").run("test")
 
     assert train_summary["architecture"] == "ridge"
     assert (output_dir / "model.joblib").exists()

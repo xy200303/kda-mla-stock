@@ -164,3 +164,55 @@ class TrainingConfig:
             json.dumps(asdict(self), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+
+SUPPORTED_ESTIMATOR_MODELS = {"ridge", "random_forest", "hist_gbdt", "lightgbm"}
+
+
+@dataclass
+class EstimatorConfig:
+    architecture: str
+    aggregation_windows: list[int] = field(default_factory=lambda: [5, 20, 60, 256])
+    params: dict[str, Any] = field(default_factory=dict)
+    feature_scheme: str = "last_mean_std"
+
+    def validate(self) -> None:
+        if self.architecture not in SUPPORTED_ESTIMATOR_MODELS:
+            supported = ", ".join(sorted(SUPPORTED_ESTIMATOR_MODELS))
+            raise ValueError(f"estimator architecture must be one of {supported}")
+        if self.feature_scheme != "last_mean_std":
+            raise ValueError("feature_scheme must be last_mean_std")
+        if not self.aggregation_windows or any(window <= 0 for window in self.aggregation_windows):
+            raise ValueError("aggregation_windows must contain positive values")
+        if len(self.aggregation_windows) != len(set(self.aggregation_windows)):
+            raise ValueError("aggregation_windows must not contain duplicates")
+
+    @classmethod
+    def from_json(cls, path: str | Path) -> EstimatorConfig:
+        return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> EstimatorConfig:
+        config = cls(**payload)
+        config.validate()
+        return config
+
+    def save_json(self, path: str | Path) -> None:
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(
+            json.dumps(asdict(self), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+
+# Kept as a public alias so existing experiment configs and callers remain compatible.
+TraditionalModelConfig = EstimatorConfig
+ModelConfiguration = ModelConfig | EstimatorConfig
+
+
+def load_model_config(path: str | Path) -> ModelConfiguration:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if payload.get("architecture") in SUPPORTED_ESTIMATOR_MODELS:
+        return EstimatorConfig.from_dict(payload)
+    return ModelConfig.from_dict(payload)

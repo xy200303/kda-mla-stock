@@ -11,14 +11,14 @@ from pathlib import Path
 import torch
 from torch import nn
 
-from kda_mla_stock.configuration import ModelConfig, TrainingConfig
-from kda_mla_stock.models.neural import (
+from kda_mla_stock.core.config import ModelConfig, TrainingConfig
+from kda_mla_stock.models import count_parameters
+from kda_mla_stock.models.kda_mla import (
     EncoderLayer,
     GatedFeedForward,
     KimiDeltaAttention,
     MultiHeadLatentAttention,
     StockForecaster,
-    count_parameters,
 )
 
 

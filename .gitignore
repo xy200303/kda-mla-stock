@@ -3,6 +3,6 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
-data/
-outputs/
-runs/
+/data/
+/outputs/
+/runs/

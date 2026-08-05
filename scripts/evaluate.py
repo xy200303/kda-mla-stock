@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 
-from kda_mla_stock.engine import Valer
-from kda_mla_stock.qlib_evaluation import QlibBacktestConfig
+from kda_mla_stock.evaluation.backtests import QlibBacktestConfig
+from kda_mla_stock.orchestration import EvaluationRunner
 
 
 def main() -> None:
@@ -28,7 +28,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    valer = Valer(args.checkpoint_dir, requested_device=args.device)
+    valer = EvaluationRunner(args.checkpoint_dir, requested_device=args.device)
     training_config = valer.training_config
     qlib_config = None
     if not args.skip_qlib:

@@ -4,9 +4,8 @@ import argparse
 import json
 from dataclasses import replace
 
-from kda_mla_stock.configuration import TrainingConfig
-from kda_mla_stock.engine import Trainer
-from kda_mla_stock.models import load_model_config
+from kda_mla_stock.core.config import TrainingConfig, load_model_config
+from kda_mla_stock.orchestration import TrainRunner
 
 
 def main() -> None:
@@ -57,7 +56,7 @@ def main() -> None:
     if overrides:
         training_config = replace(training_config, **overrides)
         training_config.validate()
-    result = Trainer(
+    result = TrainRunner(
         model_config,
         training_config,
         resume_from=args.resume,

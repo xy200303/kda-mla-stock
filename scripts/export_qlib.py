@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from kda_mla_stock.qlib_data import export_qlib_market
+from kda_mla_stock.data.qlib import export_qlib_market
 
 
 def main() -> None:

@@ -29,8 +29,9 @@ KDA 负责用递归状态压缩长序列，MLA 在少量层中补充完整的因
 LightGBM 使用官方 `lightgbm`，KDA 正式训练使用 `fla-core`，MLA 使用 PyTorch 官方 SDPA。项目自己的
 代码只负责模型组合、无泄漏特征、统一训练评估和科研报告。
 
-所有模型实现位于 `src/kda_mla_stock/models/`。`Trainer`、`Valer` 和 `MarketDatasetBundle` 为神经
-网络与传统模型提供统一入口；旧的 `modeling.py`、`traditional.py` 和传统模型脚本只保留兼容导入。
+所有模型实现位于 `src/kda_mla_stock/models/`，每种架构拥有独立目录。`MarketDataModule` 统一提供
+时序和表格数据视图，`TrainRunner`、`EvaluationRunner` 负责组装 Trainer、Validator 和最终评估器。
+Ridge、Random Forest、HistGBDT 与 LightGBM 仍直接使用官方库实现。
 
 ## AutoDL 快速开始
 
@@ -299,20 +300,26 @@ kda-mla-stock/
 ├── configs/                  # 混合模型、消融和训练配置
 ├── scripts/                  # 真实数据准备、训练、评估与辅助命令
 ├── src/kda_mla_stock/
-│   ├── data.py               # 特征、归一化、时间切分和窗口数据集
-│   ├── datasets.py           # 神经/传统模型统一数据加载与表格特征
-│   ├── engine.py             # 统一 Trainer 与 Valer
+│   ├── core/                 # 配置、运行时、接口契约与制品读写
+│   ├── data/
+│   │   ├── market.py         # CSV 校验、特征工程与归一化
+│   │   ├── window.py         # 时间切分与时序窗口数据集
+│   │   ├── tabular.py        # 传统模型的因果聚合特征
+│   │   └── module.py         # 统一 MarketDataModule
 │   ├── models/
-│   │   ├── neural.py         # KDA、MLA 与神经网络基线
-│   │   └── traditional.py    # sklearn/LightGBM 模型适配
-│   ├── training.py           # 训练、TensorBoard 和 safetensors 检查点
-│   ├── evaluation.py         # 统一预测指标、回测和图表入口
-│   ├── metrics.py            # IC、Rank IC 和 ICIR
-│   ├── qlib_evaluation.py     # Qlib 策略、撮合和风险分析
-│   ├── reporting.py          # 论文图表与模型比较
-│   └── backtest.py           # 轻量诊断多空回测
+│   │   ├── registry.py       # 架构、后端与模型制品注册表
+│   │   ├── kda_mla/          # KDA、MLA 和混合预测模型
+│   │   ├── lstm|gru|.../     # 每个神经基线的独立实现
+│   │   └── ridge|.../        # sklearn/LightGBM 官方模型构造器
+│   ├── training/             # Torch 与 estimator Trainer
+│   ├── validation/           # 训练期 Torch 与 estimator Validator
+│   ├── evaluation/           # 最终指标、Qlib 回测与科研图表
+│   └── orchestration/        # 统一训练、评估与实验调度
 └── tests/                    # 泄漏、模型、指标、回测和训练测试
 ```
+
+新增模型时，在 `models/<architecture>/` 中实现模型并在 `models/registry.py` 注册。调度层根据注册项
+选择 Torch 或 estimator Trainer，不需要修改数据切分、Validator 或最终评估流程。
 
 真实研究还需要处理涨跌停、停牌成交可行性、手续费/滑点、指数成分变更、退市样本和数据发布时点。
 当前回测是模型研究基线，不是完整撮合引擎。

@@ -5,9 +5,9 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-from kda_mla_stock.configuration import ModelConfig, TrainingConfig
-from kda_mla_stock.engine import Trainer
+from kda_mla_stock.core.config import ModelConfig, TrainingConfig
 from kda_mla_stock.models import StockForecaster
+from kda_mla_stock.orchestration import TrainRunner
 from kda_mla_stock.training import load_model
 
 
@@ -46,7 +46,7 @@ def test_one_epoch_training_and_checkpoint_load(
         mixed_precision="no",
         patience=1,
     )
-    result = Trainer(
+    result = TrainRunner(
         model_config,
         training_config,
         requested_device="cpu",

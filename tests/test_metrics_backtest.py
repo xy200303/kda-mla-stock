@@ -3,8 +3,8 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from kda_mla_stock.backtest import run_long_short_backtest, summarize_backtest
-from kda_mla_stock.metrics import evaluate_predictions
+from kda_mla_stock.evaluation.backtests import run_long_short_backtest, summarize_backtest
+from kda_mla_stock.evaluation.metrics import evaluate_predictions
 
 
 def test_metrics_and_long_short_backtest() -> None:

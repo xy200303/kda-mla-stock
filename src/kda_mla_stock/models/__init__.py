@@ -1,32 +1,27 @@
-from __future__ import annotations
-
-import json
-from pathlib import Path
-
-from kda_mla_stock.configuration import ModelConfig
-from kda_mla_stock.models.neural import StockForecaster, build_model, count_parameters
-from kda_mla_stock.models.traditional import (
-    SUPPORTED_TRADITIONAL_MODELS,
+from kda_mla_stock.core.artifacts import load_estimator, save_estimator
+from kda_mla_stock.core.config import (
+    EstimatorConfig,
+    ModelConfiguration,
     TraditionalModelConfig,
+    load_model_config,
+)
+from kda_mla_stock.models.common.estimator import count_estimator_parameters
+from kda_mla_stock.models.kda_mla.model import StockForecaster
+from kda_mla_stock.models.registry import (
+    MODEL_REGISTRY,
+    ModelRegistration,
     build_estimator,
-    count_estimator_parameters,
+    build_model,
+    count_parameters,
     fit_estimator,
-    load_estimator,
-    save_estimator,
+    get_registration,
 )
 
-ModelConfiguration = ModelConfig | TraditionalModelConfig
-
-
-def load_model_config(path: str | Path) -> ModelConfiguration:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if payload.get("architecture") in SUPPORTED_TRADITIONAL_MODELS:
-        return TraditionalModelConfig.from_dict(payload)
-    return ModelConfig.from_dict(payload)
-
-
 __all__ = [
+    "MODEL_REGISTRY",
+    "EstimatorConfig",
     "ModelConfiguration",
+    "ModelRegistration",
     "StockForecaster",
     "TraditionalModelConfig",
     "build_estimator",
@@ -34,6 +29,7 @@ __all__ = [
     "count_estimator_parameters",
     "count_parameters",
     "fit_estimator",
+    "get_registration",
     "load_estimator",
     "load_model_config",
     "save_estimator",

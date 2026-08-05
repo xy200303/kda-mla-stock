@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from kda_mla_stock.configuration import ModelConfig
+from kda_mla_stock.core.config import ModelConfig
 from kda_mla_stock.models import StockForecaster, build_model
 
 
