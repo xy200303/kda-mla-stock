@@ -69,6 +69,16 @@ python scripts/prepare_qlib_real.py --force-download
 调整重试次数和读取超时。下载默认继承当前 shell 的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`
 和 `NO_PROXY`；如果系统代理没有传入 Python 进程，可通过 `--proxy http://代理地址:端口` 显式指定。
 
+脚本默认通过 `https://gh-proxy.com` 下载 PyQLib 生成的官方 GitHub Release URL，并支持对已有 `.part`
+文件继续断点续传。该镜像是第三方传输服务，不是 Qlib 官方数据源；需要绕过镜像、直接访问官方地址时使用：
+
+```bash
+python scripts/prepare_qlib_real.py --force-download --no-github-mirror
+```
+
+需要临时替换镜像时传入 `--github-mirror https://镜像域名`。镜像模式下不建议同时启用 AutoDL
+学术代理，否则请求仍可能经过不稳定的代理链路。
+
 它根据下载到的真实交易日自动划分数据：最后 252 个交易日作为测试集，之前 252 个交易日作为验证集，
 更早的数据用于训练。生成的实际配置保存在 `data/train-real.json`。
 

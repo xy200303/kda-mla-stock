@@ -7,11 +7,24 @@ import zipfile
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import pandas as pd
 
 from kda_mla_stock.core.config import TrainingConfig
 from kda_mla_stock.data.qlib import export_qlib_market
+
+DEFAULT_GITHUB_MIRROR = "https://gh-proxy.com"
+
+
+def _apply_github_mirror(official_url: str, mirror: str | None) -> str:
+    if mirror is None:
+        return official_url
+    normalized = mirror.strip().rstrip("/")
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("GitHub mirror must be an absolute HTTP(S) URL")
+    return f"{normalized}/{official_url}"
 
 
 def _remote_size(content_range: str | None) -> int | None:
@@ -261,12 +274,27 @@ def main() -> None:
         default=None,
         help="Override the system HTTP(S) proxy for the Qlib download",
     )
+    parser.add_argument(
+        "--github-mirror",
+        default=DEFAULT_GITHUB_MIRROR,
+        help=f"GitHub URL mirror (default: {DEFAULT_GITHUB_MIRROR})",
+    )
+    parser.add_argument(
+        "--no-github-mirror",
+        action="store_true",
+        help="Download directly from the official GitHub Release URL",
+    )
     args = parser.parse_args()
 
     if args.download_retries < 1:
         parser.error("--download-retries must be at least 1")
     if args.download_timeout <= 0:
         parser.error("--download-timeout must be positive")
+    github_mirror = None if args.no_github_mirror else args.github_mirror
+    try:
+        _apply_github_mirror("https://github.com/example/release.zip", github_mirror)
+    except ValueError as error:
+        parser.error(str(error))
 
     try:
         from qlib.tests.data import GetData
@@ -274,8 +302,13 @@ def main() -> None:
         raise SystemExit("install the Qlib extra first: pip install -e '.[qlib]'") from error
 
     provider_uri = Path(args.provider_uri).expanduser()
+    print(f"Qlib download route: {'official GitHub' if github_mirror is None else 'mirror'}")
 
     class ResumableGetData(GetData):
+        def merge_remote_url(self, file_name: str) -> str:
+            official_url = super().merge_remote_url(file_name)
+            return _apply_github_mirror(official_url, github_mirror)
+
         def check_dataset(self, file_name: str) -> bool:
             return _remote_exists(
                 self.merge_remote_url(file_name),

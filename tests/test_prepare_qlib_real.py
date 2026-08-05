@@ -7,12 +7,27 @@ from threading import Thread
 import pytest
 
 from scripts.prepare_qlib_real import (
+    DEFAULT_GITHUB_MIRROR,
+    _apply_github_mirror,
     _download_data_resumably,
     _download_with_resume,
     _remote_exists,
     _remote_size,
     _resolve_proxies,
 )
+
+
+def test_github_mirror_url() -> None:
+    official = "https://github.com/org/repo/releases/download/v1/data.zip"
+    assert _apply_github_mirror(official, DEFAULT_GITHUB_MIRROR) == (
+        "https://gh-proxy.com/https://github.com/org/repo/releases/download/v1/data.zip"
+    )
+    assert _apply_github_mirror(official, None) == official
+    assert _apply_github_mirror(official, "https://mirror.example/") == (
+        "https://mirror.example/https://github.com/org/repo/releases/download/v1/data.zip"
+    )
+    with pytest.raises(ValueError, match="absolute HTTP"):
+        _apply_github_mirror(official, "mirror.example")
 
 
 def test_remote_size() -> None:
