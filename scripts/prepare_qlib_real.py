@@ -1,13 +1,170 @@
 from __future__ import annotations
 
 import argparse
+import os
+import time
+import zipfile
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 from kda_mla_stock.core.config import TrainingConfig
 from kda_mla_stock.data.qlib import export_qlib_market
+
+
+def _remote_size(content_range: str | None) -> int | None:
+    if not content_range or "/" not in content_range:
+        return None
+    total = content_range.rsplit("/", maxsplit=1)[-1]
+    return int(total) if total.isdigit() else None
+
+
+def _download_with_resume(
+    url: str,
+    target_path: str | Path,
+    *,
+    retries: int,
+    timeout: float,
+    chunk_size: int = 1024 * 1024,
+) -> None:
+    import requests
+    from tqdm import tqdm
+
+    destination = Path(target_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    for attempt in range(1, retries + 1):
+        downloaded = destination.stat().st_size if destination.exists() else 0
+        headers = {"Range": f"bytes={downloaded}-"} if downloaded else {}
+        try:
+            with requests.get(
+                url,
+                headers=headers,
+                stream=True,
+                timeout=(15, timeout),
+            ) as response:
+                if response.status_code == 416:
+                    total = _remote_size(response.headers.get("Content-Range"))
+                    if total is not None and downloaded == total:
+                        return
+                    destination.write_bytes(b"")
+                    raise requests.exceptions.RequestException(
+                        "the remote file changed while resuming; restarting the download"
+                    )
+
+                response.raise_for_status()
+                resumed = downloaded > 0 and response.status_code == 206
+                if resumed:
+                    content_range = response.headers.get("Content-Range")
+                    if not content_range or not content_range.startswith(
+                        f"bytes {downloaded}-"
+                    ):
+                        destination.write_bytes(b"")
+                        raise requests.exceptions.RequestException(
+                            "the server returned an invalid byte range; restarting"
+                        )
+                    mode = "ab"
+                    total = _remote_size(content_range)
+                    if total is None:
+                        remaining = int(response.headers.get("Content-Length", 0))
+                        total = downloaded + remaining if remaining else None
+                    initial = downloaded
+                else:
+                    mode = "wb"
+                    total_header = int(response.headers.get("Content-Length", 0))
+                    total = total_header or None
+                    initial = 0
+
+                action = "resuming" if resumed else "downloading"
+                print(
+                    f"{action} {destination.name} "
+                    f"(attempt {attempt}/{retries}, {initial:,} bytes already saved)"
+                )
+                with tqdm(
+                    total=total,
+                    initial=initial,
+                    unit="B",
+                    unit_scale=True,
+                    unit_divisor=1024,
+                    desc=destination.name,
+                ) as progress:
+                    with destination.open(mode) as output_file:
+                        for chunk in response.iter_content(chunk_size=chunk_size):
+                            if not chunk:
+                                continue
+                            output_file.write(chunk)
+                            progress.update(len(chunk))
+
+                actual_size = destination.stat().st_size
+                if total is not None and actual_size != total:
+                    raise requests.exceptions.ChunkedEncodingError(
+                        f"incomplete download: received {actual_size:,} of {total:,} bytes"
+                    )
+                return
+        except (OSError, requests.RequestException) as error:
+            if attempt == retries:
+                raise RuntimeError(
+                    f"Qlib data download failed after {retries} attempts; "
+                    f"keep {destination} and rerun the command to resume"
+                ) from error
+            delay = min(30, 2 ** (attempt - 1))
+            saved = destination.stat().st_size if destination.exists() else 0
+            print(
+                f"download interrupted ({error}); retrying in {delay}s "
+                f"from {saved:,} bytes"
+            )
+            time.sleep(delay)
+
+
+def _download_data_resumably(
+    downloader: Any,
+    file_name: str,
+    target_dir: str | Path,
+    delete_old: bool,
+    *,
+    retries: int,
+    timeout: float,
+) -> None:
+    destination_dir = Path(target_dir).expanduser()
+    destination_dir.mkdir(exist_ok=True, parents=True)
+    partial_path = destination_dir / f".{os.path.basename(file_name)}.part"
+    if not partial_path.exists():
+        legacy_files = sorted(
+            destination_dir.glob(f"*_{os.path.basename(file_name)}"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if legacy_files:
+            legacy_files[0].replace(partial_path)
+            print(f"reusing interrupted Qlib download: {partial_path}")
+
+    url = downloader.merge_remote_url(file_name)
+    _download_with_resume(
+        url,
+        partial_path,
+        retries=retries,
+        timeout=timeout,
+    )
+    try:
+        with zipfile.ZipFile(partial_path) as archive:
+            archive.infolist()
+    except zipfile.BadZipFile:
+        print("downloaded archive is invalid; restarting it once from byte 0")
+        partial_path.write_bytes(b"")
+        _download_with_resume(
+            url,
+            partial_path,
+            retries=retries,
+            timeout=timeout,
+        )
+        with zipfile.ZipFile(partial_path) as archive:
+            archive.infolist()
+
+    downloader._unzip(partial_path, destination_dir, delete_old)
+    if downloader.delete_zip_file:
+        partial_path.unlink(missing_ok=True)
 
 
 def _automatic_boundaries(
@@ -44,7 +201,24 @@ def main() -> None:
         action="store_true",
         help="Replace an existing Qlib data directory with a fresh download",
     )
+    parser.add_argument(
+        "--download-retries",
+        type=int,
+        default=8,
+        help="Maximum download attempts; interrupted attempts resume automatically",
+    )
+    parser.add_argument(
+        "--download-timeout",
+        type=float,
+        default=120.0,
+        help="HTTP read timeout in seconds",
+    )
     args = parser.parse_args()
+
+    if args.download_retries < 1:
+        parser.error("--download-retries must be at least 1")
+    if args.download_timeout <= 0:
+        parser.error("--download-timeout must be positive")
 
     try:
         from qlib.tests.data import GetData
@@ -52,7 +226,24 @@ def main() -> None:
         raise SystemExit("install the Qlib extra first: pip install -e '.[qlib]'") from error
 
     provider_uri = Path(args.provider_uri).expanduser()
-    downloader = GetData(delete_zip_file=True)
+
+    class ResumableGetData(GetData):
+        def download_data(
+            self,
+            file_name: str,
+            target_dir: str | Path,
+            delete_old: bool = True,
+        ) -> None:
+            _download_data_resumably(
+                self,
+                file_name,
+                target_dir,
+                delete_old,
+                retries=args.download_retries,
+                timeout=args.download_timeout,
+            )
+
+    downloader = ResumableGetData(delete_zip_file=True)
     downloader.qlib_data(
         name="qlib_data",
         target_dir=str(provider_uri),

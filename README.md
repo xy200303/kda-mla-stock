@@ -64,6 +64,10 @@ bash scripts/train_real.sh
 python scripts/prepare_qlib_real.py --force-download
 ```
 
+下载使用固定的 `.part` 临时文件，并在网络中断后自动断点续传（默认最多 8 次）。如果所有重试都失败，
+直接重新执行同一命令即可从已下载位置继续；可通过 `--download-retries` 和 `--download-timeout`
+调整重试次数和读取超时。
+
 它根据下载到的真实交易日自动划分数据：最后 252 个交易日作为测试集，之前 252 个交易日作为验证集，
 更早的数据用于训练。生成的实际配置保存在 `data/train-real.json`。
 
