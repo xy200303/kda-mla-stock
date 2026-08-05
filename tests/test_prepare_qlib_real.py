@@ -9,11 +9,11 @@ import pytest
 from scripts.prepare_qlib_real import (
     DEFAULT_GITHUB_MIRROR,
     _apply_github_mirror,
+    _direct_session,
     _download_data_resumably,
     _download_with_resume,
     _remote_exists,
     _remote_size,
-    _resolve_proxies,
 )
 
 
@@ -36,23 +36,12 @@ def test_remote_size() -> None:
     assert _remote_size(None) is None
 
 
-def test_system_proxy_is_delegated_to_requests(
+def test_download_session_ignores_environment_proxies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("HTTPS_PROXY", "http://system-proxy.invalid:8080")
-    system_proxies, system_mode = _resolve_proxies("https://github.com/file.zip", None)
-    explicit_proxies, explicit_mode = _resolve_proxies(
-        "https://github.com/file.zip",
-        "http://explicit-proxy.invalid:3128",
-    )
-
-    assert system_proxies is None
-    assert system_mode == "system"
-    assert explicit_proxies == {
-        "http": "http://explicit-proxy.invalid:3128",
-        "https": "http://explicit-proxy.invalid:3128",
-    }
-    assert explicit_mode == "explicit"
+    with _direct_session() as session:
+        assert session.trust_env is False
 
 
 def test_download_resumes_partial_file(tmp_path: Path) -> None:
@@ -124,7 +113,6 @@ def test_remote_probe_uses_range_request() -> None:
             f"http://{host}:{port}/dataset.zip",
             retries=1,
             timeout=5,
-            proxy=None,
         )
     finally:
         server.shutdown()
@@ -169,7 +157,6 @@ def test_download_data_reuses_legacy_partial_file(
             False,
             retries=1,
             timeout=1,
-            proxy=None,
         )
 
     assert not legacy.exists()
